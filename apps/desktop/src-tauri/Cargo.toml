@@ -63,7 +63,7 @@ tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # Pinned: tauri-plugin-deep-link 2.6.2 doesn't build with 0.21.3 (new fields in ParseOption).
-rust-ini = "=0.21.1"
+rust-ini = "=0.21.3"
 
 [dev-dependencies]
 rcgen = "0.14.10"
