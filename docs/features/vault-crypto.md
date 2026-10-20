@@ -63,9 +63,12 @@ Every label is domain-separated with a `morphgate/v1/` prefix:
 | At least 2 passes | `KdfParams::MIN_T` = 2 | `KDF parameters rejected: fewer than 2 passes` |
 | Parallelism 1 to 16 | (literal) | `KDF parameters rejected: parallelism must be 1..=16` |
 | Salt at least 16 bytes | `KdfParams::MIN_SALT_LEN` = 16 | `KDF parameters rejected: salt shorter than 16 bytes` |
+| Memory at most 1 GiB | `KdfParams::MAX_M_KIB` = 1048576 | `KDF parameters rejected: memory cost above 1 GiB` |
+| At most 10 passes | `KdfParams::MAX_T` = 10 | `KDF parameters rejected: more than 10 passes` |
+| Salt at most 64 bytes | `KdfParams::MAX_SALT_LEN` = 64 | `KDF parameters rejected: salt longer than 64 bytes` |
 | Algorithm Argon2id | `kdf_from_wire` (`mg-store`) | `unsupported KDF <alg>` |
 
-Why: the server supplies the parameters before sign-in, and it receives the `AuthKey` at sign-in. A malicious server that handed out cheap parameters could brute-force the password from the `AuthKey` offline, then derive the KEK and open everything it stores. The floors keep each guess at least 64 MiB of memory-hard work. There is no upper bound: a server can make derivation slower, not weaker.
+Why: the server supplies the parameters before sign-in, and it receives the `AuthKey` at sign-in. A malicious server that handed out cheap parameters could brute-force the password from the `AuthKey` offline, then derive the KEK and open everything it stores. The floors keep each guess at least 64 MiB of memory-hard work. The ceilings are the other way round: they stop a server from making a device allocate or compute without bound, checked before anything is allocated, and sit well above the defaults (256 MiB, 3 passes, a 16-byte salt).
 
 ## Account keys
 
@@ -155,7 +158,7 @@ How a round pages and resolves conflicts: [Sync](sync.md).
 
 | Topic | `docs/sync-crypto-spec.md` | Code |
 | --- | --- | --- |
-| KDF floors | Memory, passes, salt | Also parallelism 1 to 16, and only `argon2id` (`kdf_from_wire`) |
+| KDF bounds | Memory, passes, salt: floors and ceilings | Also parallelism 1 to 16, and only `argon2id` (`kdf_from_wire`) |
 | Password strength | "at least 10 characters and zxcvbn ≥ 10^10" | `mg-store` enforces only the length (`MIN_PASSWORD_CHARS`); the zxcvbn check is the desktop app's (`apps/desktop/src-tauri/src/password.rs`), and it is not applied on the fresh-device recovery path (`sync_recover_sign_in`) |
 | Device unlock check | Touch ID, Windows Hello or polkit, "a check made by the app" | Still true on desktops; on Android the device key is sealed by a Keystore key a biometric check releases, and on iOS it is a keychain item iOS releases only after Face ID, Touch ID or the passcode |
 | Local `account` table | KDF params, public keys, both wrappings | Also `recovery_proof`, in the clear, so sync can be turned on later |

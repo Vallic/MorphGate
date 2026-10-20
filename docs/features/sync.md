@@ -12,10 +12,10 @@ Devices, disconnecting, password changes and recovery, email, the account page a
 | --- | --- |
 | **Sync server**: **morphgate.com** / **Your own server** | Segmented choice. morphgate.com is the default (`HOSTED_SERVER` = `https://morphgate.com`), with the hint "MorphGate's hosted sync. Like any vault-sync server, it only ever stores what this device encrypted." |
 | **Server address** | Only for your own server; placeholder `https://sync.example.com` |
-| Warning | An `http://` address other than `localhost`, `127.0.0.1` or `[::1]`: "Plain http:// sends tokens unencrypted over the network. Use https://." It warns; it doesn't block |
+| Warning | An `http://` address other than `localhost`, `127.0.0.1` or `[::1]`: "Plain http:// would send your sign-in unencrypted over the network, so MorphGate takes it only for a server on this computer (localhost). Use https://." The sync client then refuses the address (below) |
 | **Check** | Sign-up form only: runs discovery (below) |
 
-`SyncClient::new` takes `https://` or `http://` only ("use https:// (or http:// for local testing)") and keeps only the origin: it drops any path and query, so the API is always `<origin>/v1/` and discovery `<origin>/.well-known/vault-sync`. Every request has a 30-second timeout and the user agent `MorphGate/<version>`.
+`SyncClient::new` takes `https://`, and `http://` only for this computer (`localhost` or a loopback address): elsewhere the `AuthKey` and the tokens would cross the network readable ("use https:// (plain http:// only for a server on this computer: localhost, 127.0.0.1 or [::1])"). An address with a user name or password is refused. It keeps only the origin: it drops any path, query and fragment, so the API is always `<origin>/v1/` and discovery `<origin>/.well-known/vault-sync`. Redirects aren't followed (the API never redirects, and following one could leave HTTPS or the server). Every request has a 30-second timeout and the user agent `MorphGate/<version>`.
 
 ### Discovery
 

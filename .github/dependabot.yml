@@ -15,6 +15,11 @@ updates:
     open-pull-requests-limit: 5
     ignore:
       - dependency-name: "tauri*"
+      # Pinned: tauri-plugin-deep-link doesn't build with 0.21.3 (new fields in ParseOption).
+      - dependency-name: rust-ini
+      # 6 has no blocking API, which mg-presence's polkit code uses: a port, not a bump.
+      - dependency-name: zbus
+        update-types: ["version-update:semver-major"]
     groups:
       crates:
         update-types: [minor, patch]
@@ -28,6 +33,9 @@ updates:
     open-pull-requests-limit: 5
     ignore:
       - dependency-name: "@tauri-apps/*"
+      # Node's types follow the Node the project runs on (22).
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
     groups:
       npm:
         update-types: [minor, patch]
@@ -37,6 +45,11 @@ updates:
     target-branch: develop
     schedule:
       interval: monthly
+    ignore:
+      # v1 points latest.json at GitHub's API (anonymous downloads limited per address) and
+      # renames inputs: a deliberate move, not a bump.
+      - dependency-name: tauri-apps/tauri-action
+        update-types: ["version-update:semver-major"]
     groups:
       actions:
         patterns: ["*"]

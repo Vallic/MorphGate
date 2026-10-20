@@ -128,9 +128,22 @@ export function NewPasswordFields({
 }
 
 /** Shows a recovery code once, with copy and an explicit "I saved it" acknowledgement. */
+/** How long a copied recovery key stays on the clipboard, at most, where the webview allows
+ * clearing it without a click (WebKit lets pages write the clipboard only right after one). */
+const CLIPBOARD_SECONDS = 60;
+
 export function RecoveryCode({ code, action, onDone }: { code: string; action: string; onDone: () => void }) {
   const [saved, setSaved] = useState(false);
   const [copied, setCopied] = useState(false);
+  // Copied: cleared on leaving this screen (a click, so it works everywhere), or after a minute.
+  const clear = () => {
+    if (copied) void navigator.clipboard?.writeText("").catch(() => {});
+  };
+  useEffect(() => {
+    if (!copied) return;
+    const t = setTimeout(() => void navigator.clipboard?.writeText("").catch(() => {}), CLIPBOARD_SECONDS * 1000);
+    return () => clearTimeout(t);
+  }, [copied]);
   return (
     <>
       <div className="recovery-code" aria-label="Recovery key">
@@ -141,11 +154,12 @@ export function RecoveryCode({ code, action, onDone }: { code: string; action: s
       <button type="button" className="secondary" onClick={() => void navigator.clipboard?.writeText(code).then(() => setCopied(true))}>
         {copied ? "Copied" : "Copy to clipboard"}
       </button>
+      {copied && <p className="hint">MorphGate clears the clipboard when you continue, so the key doesn't stay there.</p>}
       <label className="check">
         <input type="checkbox" checked={saved} onChange={(e) => setSaved(e.target.checked)} />
         <span>I stored it somewhere safe, away from this device</span>
       </label>
-      <button type="button" className="primary large" disabled={!saved} onClick={onDone}>
+      <button type="button" className="primary large" disabled={!saved} onClick={() => (clear(), onDone())}>
         {action}
       </button>
     </>

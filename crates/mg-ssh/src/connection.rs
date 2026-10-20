@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use russh::client::{self, KeyboardInteractiveAuthResponse, Msg};
 use russh::keys::agent::AgentIdentity;
-use russh::keys::{PrivateKeyWithHashAlg, PublicKey, PublicKeyOrCertificate};
+use russh::keys::{HashAlg, PrivateKeyWithHashAlg, PublicKey, PublicKeyOrCertificate};
 use russh::{Channel, ChannelStream, Disconnect};
 use tokio::sync::mpsc;
 use zeroize::Zeroizing;
@@ -577,6 +577,17 @@ impl client::Handler for Verifier {
         // asked for where a CA is (see `client_config`); one that doesn't hold up is refused,
         // as OpenSSH does.
         if let PublicKeyOrCertificate::Certificate(cert) = server_key {
+            // Revoked: the certificate's key, or the CA that signed it.
+            for revoked in [cert.public_key(), cert.signature_key()] {
+                if let Some(from) = self.known_hosts.revoked(&self.host, self.port, revoked) {
+                    return Ok(self.reject(Error::HostKeyRevoked {
+                        host: self.host.clone(),
+                        port: self.port,
+                        fingerprint: revoked.fingerprint(HashAlg::Sha256).to_string(),
+                        from,
+                    }));
+                }
+            }
             let authorities = self.known_hosts.authorities_for(&self.host, self.port);
             if !authorities.is_empty() {
                 return Ok(
@@ -601,6 +612,12 @@ impl client::Handler for Verifier {
         let mut info = HostKeyInfo::new(&self.host, self.port, &key);
         match self.known_hosts.check(&self.host, self.port, &key)? {
             HostKeyCheck::Trusted => Ok(true),
+            HostKeyCheck::Revoked { from } => Ok(self.reject(Error::HostKeyRevoked {
+                host: self.host.clone(),
+                port: self.port,
+                fingerprint: info.fingerprint.clone(),
+                from,
+            })),
             HostKeyCheck::Changed { path, line } => {
                 info.pinned = self
                     .known_hosts

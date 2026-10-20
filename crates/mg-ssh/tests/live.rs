@@ -332,12 +332,20 @@ async fn jump_through_a_command() {
     });
     let mut o = opts(&env, auth(&env));
     o.jumps = vec![hop(&env)];
-    // A relay to %h:%p, as `nc %h %p` (tests/relay.py: the sshd runs on this machine).
-    o.via_command = Some(format!(
-        "exec python3 -I '{}/tests/relay.py' %h %p",
-        env!("CARGO_MANIFEST_DIR")
-    ));
-    let (s, ev) = Session::connect(o, kh, prompt).await.unwrap();
+    // A relay to %h:%p, as `nc %h %p` (tests/relay.py: the sshd runs on this machine). The jump
+    // host runs it as the test's SSH user, who may not be able to read this checkout (CI's
+    // throwaway user can't enter the runner's home): a world-readable copy in the temp folder.
+    let relay = std::env::temp_dir().join(format!("mg-relay-{}.py", std::process::id()));
+    std::fs::write(&relay, include_str!("relay.py")).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&relay, std::fs::Permissions::from_mode(0o644)).unwrap();
+    }
+    o.via_command = Some(format!("exec python3 -I '{}' %h %p", relay.display()));
+    let connected = Session::connect(o, kh, prompt).await;
+    let _ = std::fs::remove_file(&relay);
+    let (s, ev) = connected.unwrap();
     let (out, _) = run(s, ev, "echo via-command-ok").await;
     assert!(out.contains("via-command-ok"), "output was: {out}");
 }

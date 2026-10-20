@@ -1,7 +1,8 @@
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum Error {
+    /// Below the floors (a downgrade) or above the ceilings (work a server shouldn't impose).
     #[error("KDF parameters rejected: {0}")]
-    WeakKdf(&'static str),
+    KdfRejected(&'static str),
     #[error("key derivation failed")]
     Kdf,
     #[error("decryption failed (wrong key or tampered data)")]

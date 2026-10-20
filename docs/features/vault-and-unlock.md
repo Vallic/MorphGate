@@ -71,7 +71,7 @@ Deleting leaves a tombstone (`envelope` NULL, `deleted` 1) so the deletion syncs
 | Step | UI |
 | --- | --- |
 | **Create your vault** | **Master password**, the strength meter, **Repeat password** ("Passwords don't match."), **Create vault** (enabled once the password is strong and repeated; "Deriving keys…" while busy) |
-| **Save your recovery key** | The code in groups, **Copy to clipboard** ("Copied"), the checkbox **I stored it somewhere safe, away from this device**, then **Open my vault** (enabled once ticked) |
+| **Save your recovery key** | The code in groups, **Copy to clipboard** ("Copied", and "MorphGate clears the clipboard when you continue, so the key doesn't stay there."), the checkbox **I stored it somewhere safe, away from this device**, then **Open my vault** (enabled once ticked), which clears the clipboard if the key was copied; a minute on the screen clears it too, where the webview allows that without a click (`RecoveryCode` in `VaultGate.tsx`) |
 
 `vault_create` checks the password (`password::check`), then `LocalVault::create` runs in one transaction: new KDF parameters, the master key, random account keys, a random recovery key, a personal vault (ULID) and its key sealed to the account. It returns the recovery key; the command returns its code, which the UI shows once and never stores. A freshly created vault then gets a one-time offer to turn on sync. After a device was erased, the first screen says why above the form (see [Resetting](#resetting)).
 

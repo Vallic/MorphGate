@@ -57,7 +57,7 @@ export function SyncServerField({ value, onChange, action }: Props) {
       ) : (
         <p className="hint">MorphGate's hosted sync. Like any vault-sync server, it only ever stores what this device encrypted.</p>
       )}
-      {own && isPlainHttp(address) && <p className="warn">Plain http:// sends tokens unencrypted over the network. Use https://.</p>}
+      {own && isPlainHttp(address) && <p className="warn">Plain http:// would send your sign-in unencrypted over the network, so MorphGate takes it only for a server on this computer (localhost). Use https://.</p>}
     </div>
   );
 }

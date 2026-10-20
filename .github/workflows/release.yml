@@ -50,7 +50,7 @@ jobs:
       matrix: ${{ steps.plan.outputs.matrix }}
       ios: ${{ steps.plan.outputs.ios }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Signing keys are configured
         env:
@@ -59,6 +59,32 @@ jobs:
         run: |
           [ -n "$UPDATER" ] || { echo "::error::secret TAURI_SIGNING_PRIVATE_KEY is missing (RELEASING.md)"; exit 1; }
           [ -n "$ANDROID" ] || { echo "::error::secret ANDROID_KEYSTORE_BASE64 is missing (RELEASING.md)"; exit 1; }
+
+      # A production release is signed on every platform, or not built: the operating system's
+      # signature is what lets a first download open (updates are signed regardless). Dev builds
+      # may go without.
+      - name: Production signing is configured
+        if: github.ref_name == 'main'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
+          APPLE_API_KEY: ${{ vars.APPLE_API_KEY }}
+          APPLE_API_ISSUER: ${{ vars.APPLE_API_ISSUER }}
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+          ARTIFACT_SIGNING_PROFILE: ${{ vars.ARTIFACT_SIGNING_PROFILE }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          IOS_CERTIFICATE: ${{ secrets.IOS_CERTIFICATE }}
+          IOS_MOBILE_PROVISION: ${{ secrets.IOS_MOBILE_PROVISION }}
+        run: |
+          missing=""
+          for v in APPLE_CERTIFICATE APPLE_SIGNING_IDENTITY APPLE_API_KEY APPLE_API_ISSUER APPLE_API_KEY_P8 \
+                   ARTIFACT_SIGNING_PROFILE AZURE_CLIENT_SECRET IOS_CERTIFICATE IOS_MOBILE_PROVISION; do
+            [ -n "${!v}" ] || missing="$missing $v"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::a production release is signed on every platform; missing:$missing (RELEASING.md, Code signing)"
+            exit 1
+          fi
 
       - id: plan
         env:
@@ -174,7 +200,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Linux build dependencies
         if: runner.os == 'Linux'
@@ -190,7 +216,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -229,7 +255,7 @@ jobs:
           Set-Content -Path "$env:RUNNER_TEMP\sign.cmd" -Encoding ascii `
             -Value "@artifact-signing-cli -e $env:ENDPOINT -a $env:ACCOUNT -c $env:CERT_PROFILE -d MorphGate %* 1>&2"
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v6
         if: runner.os == 'Windows' && vars.ARTIFACT_SIGNING_PROFILE != ''
         with:
           dotnet-version: 8.0.x
@@ -263,7 +289,8 @@ jobs:
           cat apps/desktop/src-tauri/tauri.release.conf.json
 
       # macOS: signed with Vallic d.o.o.'s Developer ID, and notarized with an App Store Connect
-      # API key, where those secrets and variables exist (RELEASING.md); unsigned otherwise.
+      # API key, where those secrets and variables exist (RELEASING.md); a dev build goes unsigned
+      # otherwise, a production one stops (Plan checks it first).
       # Put in the job's environment here rather than in the build's env: an empty
       # APPLE_CERTIFICATE fails the build.
       - name: Apple signing
@@ -276,8 +303,13 @@ jobs:
           API_KEY: ${{ vars.APPLE_API_KEY }}
           API_ISSUER: ${{ vars.APPLE_API_ISSUER }}
           API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+          CHANNEL: ${{ needs.plan.outputs.channel }}
         run: |
           if [ -z "$CERTIFICATE" ] || [ -z "$IDENTITY" ]; then
+            if [ "$CHANNEL" = prod ]; then
+              echo "::error::a production build must be signed: APPLE_CERTIFICATE or APPLE_SIGNING_IDENTITY missing"
+              exit 1
+            fi
             echo "::warning::macOS build unsigned: APPLE_CERTIFICATE or APPLE_SIGNING_IDENTITY missing"
             exit 0
           fi
@@ -390,9 +422,9 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: 21
@@ -403,7 +435,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -459,7 +491,7 @@ jobs:
     runs-on: macos-26
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -467,7 +499,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -510,7 +542,7 @@ jobs:
           security cms -D -i "$app/embedded.mobileprovision" | plutil -extract Name raw -o - -
           plutil -p "$app/Info.plist" | grep -E "CFBundleIdentifier|CFBundleShortVersionString|CFBundleVersion|ITSAppUsesNonExemptEncryption"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ios
           path: apps/desktop/src-tauri/gen/apple/build/arm64/MorphGate.ipa
@@ -525,9 +557,9 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 75
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: ios
           path: ${{ runner.temp }}/ios

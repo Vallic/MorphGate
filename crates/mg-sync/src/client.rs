@@ -83,22 +83,39 @@ pub struct SyncClient {
 }
 
 impl SyncClient {
-    /// `server` is the origin, e.g. `https://sync.morphgate.com` or `http://127.0.0.1:8443`.
+    /// `server` is the origin, e.g. `https://morphgate.com` or `http://127.0.0.1:8443`.
+    /// Plain HTTP only to this computer: anywhere else the login proof and the tokens would
+    /// cross the network readable.
     pub fn new(server: &str) -> Result<Self> {
         let mut origin = Url::parse(server.trim()).map_err(|e| Error::BadUrl(e.to_string()))?;
-        if !matches!(origin.scheme(), "https" | "http") {
+        match origin.scheme() {
+            "https" => {}
+            "http" if loopback(&origin) => {}
+            "http" => {
+                return Err(Error::BadUrl(
+                    "use https:// (plain http:// only for a server on this computer: localhost, \
+                     127.0.0.1 or [::1])"
+                        .into(),
+                ));
+            }
+            _ => return Err(Error::BadUrl("use https://".into())),
+        }
+        if !origin.username().is_empty() || origin.password().is_some() {
             return Err(Error::BadUrl(
-                "use https:// (or http:// for local testing)".into(),
+                "the address can't hold a user name or password".into(),
             ));
         }
         origin.set_path("/");
         origin.set_query(None);
+        origin.set_fragment(None);
         let api = origin
             .join("v1/")
             .map_err(|e| Error::BadUrl(e.to_string()))?;
         let http = reqwest::Client::builder()
             .user_agent(concat!("MorphGate/", env!("CARGO_PKG_VERSION")))
             .timeout(std::time::Duration::from_secs(30))
+            // The API never redirects: following one could leave HTTPS or the server.
+            .redirect(reqwest::redirect::Policy::none())
             .build()?;
         Ok(Self {
             http,
@@ -935,6 +952,16 @@ async fn error(resp: reqwest::Response) -> Error {
     }
 }
 
+/// `localhost`, or a loopback address.
+fn loopback(url: &Url) -> bool {
+    match url.host() {
+        Some(url::Host::Domain(d)) => d.eq_ignore_ascii_case("localhost"),
+        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+        None => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -972,5 +999,27 @@ mod tests {
             e("upgrade_required", None, Some("business")),
             "this needs the Business plan"
         );
+    }
+
+    #[test]
+    fn plain_http_only_to_this_computer() {
+        for ok in [
+            "https://sync.example.com",
+            "http://127.0.0.1:8443",
+            "http://localhost:8443/",
+            "http://[::1]:8443",
+        ] {
+            assert!(SyncClient::new(ok).is_ok(), "{ok}");
+        }
+        for bad in [
+            "http://sync.example.com",
+            "http://192.168.1.5:8443",
+            "ftp://sync.example.com",
+            "https://me:pw@sync.example.com",
+        ] {
+            assert!(SyncClient::new(bad).is_err(), "{bad}");
+        }
+        let c = SyncClient::new("https://sync.example.com/some/path?x=1#frag").unwrap();
+        assert_eq!(c.origin(), "https://sync.example.com");
     }
 }

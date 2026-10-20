@@ -18,6 +18,14 @@ pub enum Error {
     HostKeyChanged(Box<HostKeyInfo>),
     #[error("host key for {}:{} was not accepted", .0.host, .0.port)]
     HostKeyRejected(Box<HostKeyInfo>),
+    /// A key (or the CA that signed a host certificate) that a known_hosts `@revoked` line names.
+    #[error("the host key of {host}:{port} ({fingerprint}) is revoked in {from}: refused")]
+    HostKeyRevoked {
+        host: String,
+        port: u16,
+        fingerprint: String,
+        from: String,
+    },
     /// A host certificate where a CA is trusted for the host, that the CA didn't sign for it.
     #[error("the host certificate of {host}:{port} isn't accepted: {why}")]
     HostCertificate {
