@@ -50,7 +50,7 @@ jobs:
       matrix: ${{ steps.plan.outputs.matrix }}
       ios: ${{ steps.plan.outputs.ios }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Signing keys are configured
         env:
@@ -174,7 +174,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Linux build dependencies
         if: runner.os == 'Linux'
@@ -190,7 +190,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -229,7 +229,7 @@ jobs:
           Set-Content -Path "$env:RUNNER_TEMP\sign.cmd" -Encoding ascii `
             -Value "@artifact-signing-cli -e $env:ENDPOINT -a $env:ACCOUNT -c $env:CERT_PROFILE -d MorphGate %* 1>&2"
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v6
         if: runner.os == 'Windows' && vars.ARTIFACT_SIGNING_PROFILE != ''
         with:
           dotnet-version: 8.0.x
@@ -298,7 +298,7 @@ jobs:
             echo "::warning::macOS build signed but not notarized: APPLE_API_KEY, APPLE_API_ISSUER or APPLE_API_KEY_P8 missing"
           fi
 
-      - uses: tauri-apps/tauri-action@v0
+      - uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -390,9 +390,9 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: 21
@@ -403,7 +403,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -459,7 +459,7 @@ jobs:
     runs-on: macos-26
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -467,7 +467,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -510,7 +510,7 @@ jobs:
           security cms -D -i "$app/embedded.mobileprovision" | plutil -extract Name raw -o - -
           plutil -p "$app/Info.plist" | grep -E "CFBundleIdentifier|CFBundleShortVersionString|CFBundleVersion|ITSAppUsesNonExemptEncryption"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ios
           path: apps/desktop/src-tauri/gen/apple/build/arm64/MorphGate.ipa
@@ -525,9 +525,9 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 75
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: ios
           path: ${{ runner.temp }}/ios
