@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- MorphGate Console (the app's default theme): shown until the page paints. -->
+    <color name="ground">#FF0A1113</color>
+    <color name="gate">#FF3DDBB6</color>
+</resources>

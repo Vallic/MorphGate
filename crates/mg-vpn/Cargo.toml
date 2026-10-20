@@ -1,0 +1,45 @@
+[package]
+name = "mg-vpn"
+description = "In-app VPN tunnels (WireGuard, OpenVPN, openconnect) exposing TCP streams: no TUN, no root"
+license = "MPL-2.0"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+tracing.workspace = true
+tokio = { workspace = true, features = ["net", "rt", "process", "io-util", "time", "sync", "macros"] }
+boringtun = "0.7.1"
+smoltcp = { version = "0.14", default-features = false, features = ["std", "medium-ip", "proto-ipv4", "proto-ipv6", "socket-tcp", "socket-tcp-cubic", "socket-dns"] }
+base64 = "0.23.1"
+getrandom = "0.4.3"
+socket2 = "0.6.5"
+zeroize = "1.9.1"
+# OpenVPN: TLS control channel, data channel ciphers, legacy key derivation, decompression.
+rustls = { version = "0.23.46", default-features = false, features = ["aws_lc_rs", "std", "tls12"] }
+rustls-pki-types = { version = "1.15.1", features = ["std"] }
+aws-lc-rs = "1.18.2"
+hmac = "0.13.0"
+md-5 = "0.11.0"
+sha1 = "0.11.0"
+lz4_flex = { version = "0.14.0", default-features = false, features = ["std", "safe-decode"] }
+# OpenVPN: passphrase-protected client keys (PKCS#8, legacy OpenSSL PEM) and PKCS#12 bundles.
+pkcs8 = { version = "0.11.0", features = ["encryption", "3des", "sha1-insecure"] }
+p12-keystore = "0.4.1"
+aes = "0.9.3"
+cbc = { version = "0.2.1", features = ["block-padding"] }
+des = "0.9.0"
+
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1.1.5", features = ["net", "process"] }
+
+[dev-dependencies]
+mg-ssh = { path = "../mg-ssh" }
+tempfile = "3.27.0"
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+rcgen = "0.14.10"
+tokio-rustls = { version = "0.26.6", default-features = false, features = ["aws_lc_rs"] }
+lzokay-native = "0.1.0"
+sha2 = "0.11.1"

@@ -1,0 +1,25 @@
+[package]
+name = "vault-conform"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license = "Apache-2.0 OR MIT"
+description = "Checks a vault-sync/v1 server against the spec, endpoint by endpoint"
+
+[dependencies]
+mg-sync = { workspace = true, features = ["client"] }
+mg-store = { workspace = true, features = ["http"] }
+mg-vault.workspace = true
+tokio = { workspace = true, features = ["process"] }
+serde.workspace = true
+serde_json.workspace = true
+reqwest = { version = "0.13", features = ["json"] }
+ulid = "3.0.0"
+zeroize = "1.9.1"
+hmac = "0.13.0"
+sha1 = "0.11.0"
+sha2 = "0.11.1"
+
+[dev-dependencies]
+vault-sync-server = { path = "../../server" }
+axum = "0.8"

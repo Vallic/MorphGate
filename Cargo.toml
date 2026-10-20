@@ -1,0 +1,33 @@
+[workspace]
+resolver = "3"
+members = ["crates/mg-vault", "crates/mg-ssh", "crates/mg-store", "crates/mg-sync", "crates/mg-vpn", "crates/mg-presence", "crates/mg-inventory", "server", "apps/desktop/src-tauri", "tools/vault-conform"]
+
+[workspace.package]
+version = "0.2.0"
+edition = "2024"
+rust-version = "1.91"
+
+[workspace.dependencies]
+mg-vault = { path = "crates/mg-vault" }
+mg-ssh = { path = "crates/mg-ssh" }
+mg-store = { path = "crates/mg-store" }
+mg-sync = { path = "crates/mg-sync" }
+mg-vpn = { path = "crates/mg-vpn" }
+mg-presence = { path = "crates/mg-presence" }
+mg-inventory = { path = "crates/mg-inventory" }
+thiserror = "2"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "io-util", "time"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
+
+# Argon2 is unbearably slow unoptimised; keep dev/test builds usable.
+[profile.dev.package.argon2]
+opt-level = 3
+[profile.dev.package.blake2]
+opt-level = 3

@@ -1,0 +1,27 @@
+[package]
+name = "mg-presence"
+description = "Ask the OS to confirm the user is there: Touch ID or Face ID, Windows Hello, or polkit on Linux"
+license = "MPL-2.0"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+zbus = "5.19.0"
+
+[target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
+block2 = "0.6.2"
+objc2 = "0.6.5"
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSError", "NSString"] }
+objc2-local-authentication = { version = "0.3.2", default-features = false, features = ["std", "block2", "LABiometryType", "LAContext"] }
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62.2", features = ["Foundation", "Security_Credentials_UI", "Win32_Foundation", "Win32_System_WinRT"] }
+windows-core = "0.62.2"
+windows-future = "0.3.2"
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+tempfile = "3.27.0"

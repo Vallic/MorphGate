@@ -1,0 +1,73 @@
+[package]
+name = "morphgate-desktop"
+description = "MorphGate desktop client"
+license = "MPL-2.0"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[lib]
+name = "morphgate_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[dependencies]
+base64 = "0.23.1"
+flate2 = "1.1.10"
+mg-inventory.workspace = true
+mg-presence.workspace = true
+mg-ssh.workspace = true
+mg-store = { workspace = true, features = ["http"] }
+mg-sync.workspace = true
+mg-vault.workspace = true
+keyring = "4.2.0"
+plist = "1.10.1"
+quick-xml = "0.42.0"
+mg-vpn.workspace = true
+qrcode = { version = "0.14.1", default-features = false, features = ["svg"] }
+serde.workspace = true
+serde_json.workspace = true
+sha2 = "0.11.0"
+zxcvbn = "3.1.1"
+tauri = { version = "2", features = [] }
+tokio.workspace = true
+toml = "1.1.8"
+tracing.workspace = true
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+ulid = "3.0.0"
+zeroize = "1.9.1"
+tauri-plugin-updater = "2"
+tauri-plugin-opener = "2.7.2"
+tauri-plugin-deep-link = "2"
+# Royal TS documents saved compressed.
+zip = { version = "4.6.1", default-features = false, features = ["deflate-flate2"] }
+
+[target.'cfg(unix)'.dependencies]
+# The device's name for the sync account's device list: the host name; on Android its model, on
+# iOS whether it's an iPhone or an iPad.
+libc = "0.2"
+
+[target.'cfg(target_os = "android")'.dependencies]
+# HTTPS certificate checks go through Android's verifier: it needs the JVM and the app's context.
+jni = "0.22"
+ndk-context = "0.1"
+rustls-platform-verifier = "0.7"
+
+[target.'cfg(target_os = "ios")'.dependencies]
+# keyring's Apple store only builds on iOS with its data-protection keychain.
+apple-native-keyring-store = { version = "1", features = ["protected"] }
+# keyring has no store on iOS: the device key goes into the keychain directly (keychain.rs).
+security-framework = "3.7"
+
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# Pinned: tauri-plugin-deep-link 2.6.2 doesn't build with 0.21.3 (new fields in ParseOption).
+rust-ini = "=0.21.1"
+
+[dev-dependencies]
+rcgen = "0.14.10"
+tempfile = "3.27.0"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }

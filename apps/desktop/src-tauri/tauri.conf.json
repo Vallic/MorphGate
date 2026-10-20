@@ -1,0 +1,80 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "MorphGate",
+  "mainBinaryName": "morphgate",
+  "identifier": "com.morphgate.desktop",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "MorphGate",
+        "width": 1180,
+        "height": 760,
+        "minWidth": 360,
+        "minHeight": 440
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src ipc: http://ipc.localhost"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "createUpdaterArtifacts": true,
+    "category": "DeveloperTool",
+    "shortDescription": "SSH client with end-to-end encrypted sync",
+    "longDescription": "SSH client with saved hosts, keys, snippets, port forwarding, SFTP and per-host VPNs (WireGuard, OpenVPN, openconnect). The vault is end-to-end encrypted and syncs through MorphGate's hosted service or your own vault-sync server.",
+    "publisher": "Vallic d.o.o.",
+    "homepage": "https://morphgate.com",
+    "copyright": "© 2026 Valentino Međimorec and contributors. The MorphGate name and logo belong to Vallic d.o.o.",
+    "license": "MPL-2.0",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "linux": {
+      "deb": {
+        "files": {
+          "/usr/share/polkit-1/actions/com.morphgate.desktop.policy": "../../../crates/mg-presence/polkit/com.morphgate.desktop.policy"
+        }
+      },
+      "rpm": {
+        "files": {
+          "/usr/share/polkit-1/actions/com.morphgate.desktop.policy": "../../../crates/mg-presence/polkit/com.morphgate.desktop.policy"
+        }
+      }
+    }
+  },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["morphgate"]
+      },
+      "mobile": [
+        {
+          "scheme": ["morphgate"],
+          "appLink": false
+        }
+      ]
+    },
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDg3REQ2MjkyQzJBMEEyNDUKUldSRm9xRENrbUxkaDFGWWJWL0RJM0Qzait2VitDeklJQ0k5WUFITG9BSXFaM0ZxK1h6UkFRU1AK",
+      "endpoints": [
+        "https://github.com/Vallic/MorphGate/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
+  }
+}

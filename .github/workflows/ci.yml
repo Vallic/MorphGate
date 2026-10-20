@@ -1,0 +1,261 @@
+name: CI
+
+# Pull requests into develop (features) and into main (releases) run the tests; a manual run
+# (Actions → CI → Run workflow) does too. A fork's pull request runs on GitHub's runners only,
+# and only once a maintainer approves the run (Settings → Actions → "Require approval for all
+# external contributors"). The macOS and Windows builds, the slow ones, only run for pull
+# requests into main and manual runs.
+on:
+  pull_request:
+    branches: [develop, main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    name: Lint, test, live SSH and VPN
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/prepare
+
+      - name: Tauri system dependencies
+        run: |
+          .github/scripts/need-packages.sh build-essential pkg-config file \
+            libwebkit2gtk-4.1-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev libgtk-3-dev librsvg2-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+
+      - name: Frontend typecheck + build (tauri::generate_context! embeds dist/)
+        working-directory: apps/desktop
+        run: |
+          npm ci
+          npm run build
+
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+      # openconnect's tests drive the real program against an in-process AnyConnect server;
+      # openvpn is the server for the live OpenVPN tests below.
+      - name: VPN programs
+        run: .github/scripts/need-packages.sh openconnect openvpn
+
+      - run: cargo test --workspace --all-features
+
+      # Asks the runner's polkitd (never interactively) whether it understands our requests.
+      - name: polkit
+        run: |
+          if busctl --system status org.freedesktop.PolicyKit1 >/dev/null 2>&1; then
+            MG_TEST_POLKIT=1 cargo test -p mg-presence -- --include-ignored real_polkitd
+          else
+            echo "no polkitd on this runner"
+          fi
+
+      # A real OpenSSH on the runner (not a container): forwarding enabled, PAM password + key auth.
+      # A throwaway user with a password made for this run, deleted at the end; a free port and the
+      # job's temp dir, so runs on one machine stay apart.
+      - name: Start throwaway sshd
+        id: sshd
+        run: |
+          .github/scripts/need-packages.sh openssh-server
+          user="mg$(printf %s "$RUNNER_NAME" | md5sum | cut -c1-8)"
+          password=$(openssl rand -hex 16)
+          echo "::add-mask::$password"
+          id "$user" >/dev/null 2>&1 || sudo useradd -m -s /bin/bash "$user"
+          echo "$user:$password" | sudo chpasswd
+          key="$RUNNER_TEMP/mg_test_key"
+          ssh-keygen -q -t ed25519 -N '' -f "$key"
+          sudo install -d -m 700 -o "$user" -g "$user" "/home/$user/.ssh"
+          sudo install -m 600 -o "$user" -g "$user" "$key.pub" "/home/$user/.ssh/authorized_keys"
+          sudo ssh-keygen -A
+          sudo mkdir -p /run/sshd
+          # A host certificate for the host key, from a CA of this run's (the host CA test).
+          ssh-keygen -q -t ed25519 -N '' -f "$RUNNER_TEMP/mg_host_ca"
+          cp /etc/ssh/ssh_host_ed25519_key.pub "$RUNNER_TEMP/mg_host.pub"
+          ssh-keygen -q -s "$RUNNER_TEMP/mg_host_ca" -I mg-test-host -h -n 127.0.0.1 "$RUNNER_TEMP/mg_host.pub"
+          port=$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')
+          printf '%s\n' \
+            "Port $port" 'ListenAddress 127.0.0.1' 'HostKey /etc/ssh/ssh_host_ed25519_key' \
+            "HostCertificate $RUNNER_TEMP/mg_host-cert.pub" \
+            'UsePAM yes' 'PasswordAuthentication yes' 'KbdInteractiveAuthentication yes' \
+            'PubkeyAuthentication yes' 'AllowTcpForwarding yes' "PidFile $RUNNER_TEMP/mg_sshd.pid" \
+            'Subsystem sftp internal-sftp' \
+            | sudo tee "$RUNNER_TEMP/mg_sshd_config" >/dev/null
+          sudo /usr/sbin/sshd -t -f "$RUNNER_TEMP/mg_sshd_config"
+          sudo /usr/sbin/sshd -f "$RUNNER_TEMP/mg_sshd_config"
+          echo "address=127.0.0.1:$port" >>"$GITHUB_OUTPUT"
+          echo "user=$user" >>"$GITHUB_OUTPUT"
+          echo "password=$password" >>"$GITHUB_OUTPUT"
+          echo "key=$key" >>"$GITHUB_OUTPUT"
+          echo "host_ca=$RUNNER_TEMP/mg_host_ca.pub" >>"$GITHUB_OUTPUT"
+          for i in $(seq 1 30); do
+            ssh-keyscan -p "$port" 127.0.0.1 2>/dev/null | grep -q ssh-ed25519 && exit 0
+            sleep 1
+          done
+          exit 1
+
+      - name: Live SSH tests (password, key, jump hosts, -L/-R/-D, SFTP, over WireGuard and openconnect)
+        env:
+          MG_TEST_SSH: ${{ steps.sshd.outputs.address }}
+          MG_TEST_USER: ${{ steps.sshd.outputs.user }}
+          MG_TEST_PASSWORD: ${{ steps.sshd.outputs.password }}
+          MG_TEST_KEY: ${{ steps.sshd.outputs.key }}
+          MG_TEST_HOST_CA: ${{ steps.sshd.outputs.host_ca }}
+        run: |
+          cargo test -p mg-ssh --test live -- --include-ignored --test-threads=1
+          cargo test -p mg-vpn -- --include-ignored ssh_session_over_wireguard ssh_session_over_openconnect
+
+      # A real OpenVPN 2.6 server needs a TUN device: run server and client tests in a private
+      # network namespace so nothing touches the runner's network.
+      - name: Live OpenVPN tests (tls-auth, tls-crypt, TCP, CBC + PRF, LZO, renegotiation)
+        run: |
+          BIN=$(cargo test -p mg-vpn --no-run --message-format=json 2>/dev/null \
+            | jq -r 'select(.profile.test == true and .target.name == "mg_vpn") | .executable')
+          sudo env MG_OVPN_LIVE=1 unshare -n sh -c "ip link set lo up && $BIN openvpn::live --ignored"
+
+      - name: Stop sshd, delete its user
+        if: always()
+        env:
+          USER_NAME: ${{ steps.sshd.outputs.user }}
+        run: |
+          pid="$RUNNER_TEMP/mg_sshd.pid"
+          if [ -f "$pid" ]; then sudo kill "$(cat "$pid")" || true; fi
+          if [ -n "$USER_NAME" ] && id "$USER_NAME" >/dev/null 2>&1; then sudo userdel -r "$USER_NAME" 2>/dev/null || true; fi
+
+  # The whole app compiles on macOS and Windows (releases build there too), and the Touch ID /
+  # Windows Hello code runs (availability only: runners have neither).
+  desktop:
+    name: Desktop (${{ matrix.os }})
+    if: github.event_name == 'workflow_dispatch' || github.base_ref == 'main'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+      - name: Frontend (tauri::generate_context! embeds dist/)
+        working-directory: apps/desktop
+        run: |
+          npm ci
+          npm run build
+      - run: cargo clippy -p morphgate-desktop -p mg-presence --all-targets -- -D warnings
+      - run: cargo test -p mg-presence -p mg-store -p mg-vault -- --nocapture
+
+  # The packaged app, driven over WebDriver in a headless compositor: AppImage (with a signed
+  # self-update), deb, rpm, two people sharing a team vault through the reference sync server,
+  # every page at four widths, and the phone layout. See apps/desktop/e2e/README.md.
+  e2e:
+    name: End to end (Linux)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/prepare
+
+      - name: System dependencies
+        run: |
+          .github/scripts/need-packages.sh build-essential pkg-config \
+            libwebkit2gtk-4.1-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev libgtk-3-dev librsvg2-dev \
+            libayatana-appindicator3-dev libfuse2t64 file \
+            mutter 'webkitgtk-webdriver|webkit2gtk-driver' dbus openssh-server openssh-client tmux rpm2cpio cpio binutils
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+
+      - name: Frontend dependencies
+        working-directory: apps/desktop
+        run: npm ci
+
+      - name: tauri-driver
+        run: cargo install tauri-driver --locked
+
+      - name: Run
+        env:
+          # The tools tauri's AppImage bundler downloads are AppImages themselves.
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+        run: apps/desktop/e2e/run.sh
+
+      - name: Screenshots and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-run
+          path: target/e2e/run-*
+          retention-days: 7
+          if-no-files-found: ignore
+
+  # The Android app builds (unsigned here; releases sign it), Kotlin plugin included.
+  android:
+    name: Android build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      # Build scripts compile for the machine itself.
+      - name: C compiler
+        run: .github/scripts/need-packages.sh build-essential pkg-config unzip
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+
+      # GitHub's image has the SDK and NDK; Gradle adds the platform it needs.
+      - name: Android NDK
+        run: echo "NDK_HOME=$ANDROID_NDK_LATEST_HOME" >>"$GITHUB_ENV"
+
+      - name: Build
+        working-directory: apps/desktop
+        run: |
+          npm ci
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' ../../Cargo.toml | head -1)
+          npx tauri android build --apk --target aarch64 --config "{\"version\":\"$version\"}"
+

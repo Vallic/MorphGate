@@ -1,0 +1,104 @@
+/* MorphGate brand tokens (the MorphGate Brand design system, tokens.json): Console (dark, the
+   default) and Greenbar (light). Build from these; never paste hex values into components. */
+
+@font-face {
+  font-family: "Martian Mono";
+  src: url("./assets/fonts/MartianMono-Variable.woff2") format("woff2");
+  font-weight: 100 800;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Atkinson Hyperlegible Next";
+  src: url("./assets/fonts/AtkinsonHyperlegibleNext-Variable.woff2") format("woff2");
+  font-weight: 200 800;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Atkinson Hyperlegible Next";
+  src: url("./assets/fonts/AtkinsonHyperlegibleNext-Italic-Variable.woff2") format("woff2");
+  font-weight: 200 800;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Atkinson Hyperlegible Mono";
+  src: url("./assets/fonts/AtkinsonHyperlegibleMono-Variable.woff2") format("woff2");
+  font-weight: 200 800;
+  font-display: swap;
+}
+
+:root {
+  --font-display: "Martian Mono", ui-monospace, Menlo, monospace;
+  --font-sans: "Atkinson Hyperlegible Next", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "Atkinson Hyperlegible Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+
+  --radius-xs: 3px;
+  --radius-s: 6px;
+  --radius-m: 10px;
+  --radius-l: 16px;
+
+  --control-s: 28px;
+  --control-m: 34px;
+  --control-l: 44px;
+
+  /* Console */
+  --ground: #0a1113;
+  --surface: #10191c;
+  --surface-raised: #17242a;
+  --band: #14221f;
+  --line: #24343a;
+  --line-strong: #5c7177;
+  --ink: #dce6e3;
+  --ink-muted: #8c9d9b;
+  --gate: #3ddbb6;
+  --gate-ink: #3ddbb6;
+  --gate-soft: #12362f;
+  --on-gate: #04261e;
+  --cursor: #ffb547;
+  --cursor-ink: #ffb547;
+  --cursor-soft: #3a2c12;
+  --danger: #ff6b6b;
+  --danger-soft: #3d1c1e;
+  --focus: var(--gate-ink);
+  --shadow-pop: 0 12px 32px rgba(0, 0, 0, 0.5);
+  /* Hover on a primary button (the scheme's bright green). */
+  --gate-hover: #7bebd0;
+  /* Folders and downloads: the scheme's blue. */
+  --folder: #6cb6ff;
+  color-scheme: dark;
+}
+
+:root[data-theme="light"] {
+  /* Greenbar */
+  --ground: #f2f5f1;
+  --surface: #ffffff;
+  --surface-raised: #e8eee9;
+  --band: #edf3ee;
+  --line: #c9d6d0;
+  --line-strong: #7a8d87;
+  --ink: #0c1a1c;
+  --ink-muted: #4a5c5c;
+  --gate: #3ddbb6;
+  --gate-ink: #0a7564;
+  --gate-soft: #d2f1e6;
+  --on-gate: #04261e;
+  --cursor: #ffb547;
+  --cursor-ink: #8a5600;
+  --cursor-soft: #fbeacb;
+  --danger: #b42b28;
+  --danger-soft: #fbe3e0;
+  --shadow-pop: 0 12px 32px rgba(12, 26, 28, 0.14);
+  --gate-hover: #34c7a4;
+  --folder: #1f5fad;
+  color-scheme: light;
+}

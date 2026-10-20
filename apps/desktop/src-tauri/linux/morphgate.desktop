@@ -1,0 +1,16 @@
+[Desktop Entry]
+Type=Application
+Name=MorphGate
+GenericName=SSH Client
+{{#if comment}}
+Comment={{comment}}
+{{/if}}
+Exec={{exec}}{{#if mime_type}} %u{{/if}}
+StartupWMClass={{exec}}
+Icon={{icon}}
+Terminal=false
+Categories=Network;RemoteAccess;
+Keywords=ssh;sftp;terminal;tunnel;vpn;wireguard;openvpn;anyconnect;
+{{#if mime_type}}
+MimeType={{mime_type}}
+{{/if}}

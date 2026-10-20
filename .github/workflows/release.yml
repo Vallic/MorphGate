@@ -1,0 +1,548 @@
+name: Release
+
+# Builds installers and publishes them as GitHub releases, per branch (see RELEASING.md):
+#
+# - develop → the "dev" pre-release (tag `dev`, replaced by every push): version X.Y.Z-<run>, as
+#   "MorphGate Dev", a separate app (own id, data and update feed) that installs next to the
+#   release. Linux and Android by default; macOS, Windows or iOS too with the `platforms` input of
+#   a manual run, or all three with the repository variable DEV_ALL_PLATFORMS=true (they're the
+#   slow builds).
+# - main → a draft release vX.Y.Z (the version in Cargo.toml) with that version's CHANGELOG.md
+#   section as notes, for every platform. Publishing the draft releases it; installed apps update
+#   from there. A push to main whose version is published already builds nothing.
+#
+# iOS isn't in the GitHub release: it goes to TestFlight (App Store Connect), as build number
+# <run number>, and reaches the App Store from there (RELEASING.md, iOS).
+#
+# Updates are signed with the updater key; the APK with the Android release key. Both come from
+# repository secrets.
+
+on:
+  push:
+    branches: [main, develop]
+  workflow_dispatch:
+    inputs:
+      platforms:
+        description: "Dev builds: what besides Linux and Android (all: macOS, Windows and iOS)"
+        type: choice
+        options: [linux, all, macos, windows, ios]
+        default: linux
+
+concurrency:
+  group: release-${{ github.ref }}
+  # A newer dev build replaces the one in progress; production builds finish.
+  cancel-in-progress: ${{ github.ref == 'refs/heads/develop' }}
+
+permissions:
+  contents: write
+
+jobs:
+  plan:
+    name: Plan
+    runs-on: ubuntu-24.04
+    outputs:
+      build: ${{ steps.plan.outputs.build }}
+      build_number: ${{ steps.plan.outputs.build_number }}
+      channel: ${{ steps.plan.outputs.channel }}
+      version: ${{ steps.plan.outputs.version }}
+      tag: ${{ steps.plan.outputs.tag }}
+      release_id: ${{ steps.release.outputs.id }}
+      matrix: ${{ steps.plan.outputs.matrix }}
+      ios: ${{ steps.plan.outputs.ios }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Signing keys are configured
+        env:
+          UPDATER: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          ANDROID: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          [ -n "$UPDATER" ] || { echo "::error::secret TAURI_SIGNING_PRIVATE_KEY is missing (RELEASING.md)"; exit 1; }
+          [ -n "$ANDROID" ] || { echo "::error::secret ANDROID_KEYSTORE_BASE64 is missing (RELEASING.md)"; exit 1; }
+
+      - id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PLATFORMS: ${{ inputs.platforms || (vars.DEV_ALL_PLATFORMS == 'true' && 'all') || 'linux' }}
+          PRIVATE: ${{ github.event.repository.private }}
+          OFFSET: ${{ vars.RUN_NUMBER_OFFSET }}
+        run: |
+          base=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          # The build number: of dev versions, the dev Android app's version code and iOS builds.
+          # The repository variable RUN_NUMBER_OFFSET carries it on past an earlier repository's
+          # runs (RELEASING.md).
+          case "${OFFSET:-0}" in
+            *[!0-9]*) echo "::error::RUN_NUMBER_OFFSET must be a whole number"; exit 1 ;;
+          esac
+          number=$((GITHUB_RUN_NUMBER + 10#${OFFSET:-0}))
+          case "$GITHUB_REF_NAME" in
+            main) channel=prod version=$base tag=v$base ;;
+            develop) channel=dev version=$base-$number tag=dev ;;
+            *) echo "::error::releases come from main (production) and develop (dev)"; exit 1 ;;
+          esac
+          if [ "$channel" = prod ]; then
+            state=$(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate \
+              --jq ".[] | select(.tag_name == \"$tag\") | if .draft then \"draft\" else \"published\" end" | head -1)
+            if [ "$state" = published ]; then
+              echo "::notice::$tag is published already: bump the version in Cargo.toml to release again"
+              echo "build=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+          # rpm versions can't hold the "-" of dev versions: dev builds are AppImage and deb.
+          if [ "$channel" = dev ]; then bundles="--bundles appimage,deb"; else bundles=""; fi
+          linux="{\"name\":\"Linux x86_64\",\"os\":\"ubuntu-22.04\",\"args\":\"$bundles\"}"
+          # Arm runners are free for public repositories only (a private one would wait forever).
+          arm='{"name":"Linux arm64","os":"ubuntu-22.04-arm","args":""}'
+          mac='{"name":"macOS (Apple silicon and Intel)","os":"macos-15","args":"--target universal-apple-darwin"}'
+          win='{"name":"Windows x64","os":"windows-2025","args":""}'
+          matrix=$linux ios=false
+          if [ "$channel" = prod ]; then PLATFORMS=all; fi
+          case "$PLATFORMS" in
+            all) matrix="$matrix,$mac,$win" ios=true ;;
+            macos) matrix="$matrix,$mac" ;;
+            windows) matrix="$matrix,$win" ;;
+            ios) ios=true ;;
+          esac
+          if [ "$channel" = prod ] && [ "$PRIVATE" != true ]; then matrix="$matrix,$arm"; fi
+          {
+            echo "build=true"
+            echo "build_number=$number"
+            echo "channel=$channel"
+            echo "version=$version"
+            echo "tag=$tag"
+            echo "matrix=[$matrix]"
+            echo "ios=$ios"
+          } >> "$GITHUB_OUTPUT"
+
+      # The CHANGELOG.md section for this version: the release body, and the notes the app shows
+      # next to "Install and restart". Dev builds use the section being written, if there is one.
+      - id: notes
+        if: steps.plan.outputs.build == 'true'
+        env:
+          VERSION: ${{ steps.plan.outputs.version }}
+          CHANNEL: ${{ steps.plan.outputs.channel }}
+        run: |
+          base=${VERSION%%-*}
+          body=$(awk -v v="$base" '
+            /^## / { if (found) exit; if ($2 == v || $2 == "[" v "]") { found = 1; next } }
+            found' CHANGELOG.md)
+          if [ -z "$(printf '%s' "$body" | tr -d '[:space:]')" ]; then
+            if [ "$CHANNEL" = prod ]; then
+              echo "::error::CHANGELOG.md has no section '## $base'"
+              exit 1
+            fi
+            body="Development build."
+          fi
+          if [ "$CHANNEL" = dev ]; then
+            body=$(printf 'Development build %s from develop at %s.\n\n%s' "$VERSION" "${GITHUB_SHA:0:7}" "$body")
+          fi
+          printf '%s\n' "$body" > "$RUNNER_TEMP/notes.md"
+
+      # One release for every job to upload to: a fresh `dev` pre-release (the previous one and its
+      # tag go), or the draft for this version (an earlier, unpublished draft of it goes).
+      - id: release
+        if: steps.plan.outputs.build == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CHANNEL: ${{ steps.plan.outputs.channel }}
+          VERSION: ${{ steps.plan.outputs.version }}
+          TAG: ${{ steps.plan.outputs.tag }}
+        run: |
+          for old in $(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate --jq ".[] | select(.tag_name == \"$TAG\") | .id"); do
+            gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/$old"
+          done
+          if [ "$CHANNEL" = dev ]; then
+            gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/dev" 2>/dev/null || true
+            draft=false prerelease=true title="MorphGate Dev $VERSION"
+          else
+            draft=true prerelease=false title="MorphGate $VERSION"
+          fi
+          id=$(gh api "repos/$GITHUB_REPOSITORY/releases" \
+            -f tag_name="$TAG" -f target_commitish="$GITHUB_SHA" -f name="$title" \
+            -F draft=$draft -F prerelease=$prerelease -F body=@"$RUNNER_TEMP/notes.md" --jq .id)
+          echo "id=$id" >> "$GITHUB_OUTPUT"
+
+  desktop:
+    name: ${{ matrix.name }}
+    needs: plan
+    if: needs.plan.outputs.build == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential curl wget file libssl-dev libxdo-dev libayatana-appindicator3-dev \
+            libwebkit2gtk-4.1-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev libgtk-3-dev librsvg2-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ runner.os == 'macOS' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+
+      - name: Frontend dependencies
+        working-directory: apps/desktop
+        run: npm ci
+
+      # Builds look for updates in this repository's releases: production in the latest published
+      # one, dev builds in the `dev` pre-release. Dev builds are their own app.
+      # Windows: signed with Azure Artifact Signing once its certificate profile exists (the
+      # ARTIFACT_SIGNING_* repository variables and AZURE_* secrets, RELEASING.md); unsigned
+      # until then. Tauri signs the app and its installers before it signs the updates.
+      - name: Windows signing tools
+        if: runner.os == 'Windows' && vars.ARTIFACT_SIGNING_PROFILE != ''
+        shell: bash
+        run: cargo install artifact-signing-cli --locked
+
+      # artifact-signing-cli runs `az login --service-principal`, which refuses an identity without
+      # a role on a whole subscription ("No subscriptions found"), as a signing-only identity is.
+      # The signing itself authenticates from the AZURE_* variables; this
+      # `az` lets the login through. And Tauri shows only the stderr of a sign command that
+      # fails, while the signing library says why on stdout: sign.cmd sends it to stderr.
+      - name: Windows signing setup
+        if: runner.os == 'Windows' && vars.ARTIFACT_SIGNING_PROFILE != ''
+        shell: pwsh
+        env:
+          ENDPOINT: ${{ vars.ARTIFACT_SIGNING_ENDPOINT }}
+          ACCOUNT: ${{ vars.ARTIFACT_SIGNING_ACCOUNT }}
+          CERT_PROFILE: ${{ vars.ARTIFACT_SIGNING_PROFILE }}
+        run: |
+          $az = "$env:RUNNER_TEMP\az-login.cmd"
+          Set-Content -Path $az -Encoding ascii -Value '@call "C:\Program Files\Microsoft SDKs\Azure\CLI2\wbin\az.cmd" %* --allow-no-subscriptions'
+          "AZURE_CLI_PATH=$az" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Set-Content -Path "$env:RUNNER_TEMP\sign.cmd" -Encoding ascii `
+            -Value "@artifact-signing-cli -e $env:ENDPOINT -a $env:ACCOUNT -c $env:CERT_PROFILE -d MorphGate %* 1>&2"
+
+      - uses: actions/setup-dotnet@v4
+        if: runner.os == 'Windows' && vars.ARTIFACT_SIGNING_PROFILE != ''
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Channel
+        shell: bash
+        env:
+          CHANNEL: ${{ needs.plan.outputs.channel }}
+          VERSION: ${{ needs.plan.outputs.version }}
+          SIGN: ${{ runner.os == 'Windows' && vars.ARTIFACT_SIGNING_PROFILE != '' && format('{0}\sign.cmd %1', runner.temp) || '' }}
+        run: |
+          BASE="https://github.com/$GITHUB_REPOSITORY/releases" node -e '
+            const { CHANNEL, VERSION, BASE, SIGN } = process.env;
+            const conf =
+              CHANNEL === "dev"
+                ? {
+                    version: VERSION,
+                    productName: "MorphGate Dev",
+                    mainBinaryName: "morphgate-dev",
+                    identifier: "com.morphgate.desktop.dev",
+                    plugins: {
+                      updater: { endpoints: [`${BASE}/download/dev/latest.json`] },
+                      // Links of its own, so it never takes those meant for the release app.
+                      "deep-link": { desktop: { schemes: ["morphgate-dev"] }, mobile: [{ scheme: ["morphgate-dev"], appLink: false }] },
+                    },
+                  }
+                : { plugins: { updater: { endpoints: [`${BASE}/latest/download/latest.json`] } } };
+            if (SIGN) conf.bundle = { windows: { signCommand: SIGN } };
+            console.log(JSON.stringify(conf, null, 2));
+          ' > apps/desktop/src-tauri/tauri.release.conf.json
+          cat apps/desktop/src-tauri/tauri.release.conf.json
+
+      # macOS: signed with Vallic d.o.o.'s Developer ID, and notarized with an App Store Connect
+      # API key, where those secrets and variables exist (RELEASING.md); unsigned otherwise.
+      # Put in the job's environment here rather than in the build's env: an empty
+      # APPLE_CERTIFICATE fails the build.
+      - name: Apple signing
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
+          API_KEY: ${{ vars.APPLE_API_KEY }}
+          API_ISSUER: ${{ vars.APPLE_API_ISSUER }}
+          API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: |
+          if [ -z "$CERTIFICATE" ] || [ -z "$IDENTITY" ]; then
+            echo "::warning::macOS build unsigned: APPLE_CERTIFICATE or APPLE_SIGNING_IDENTITY missing"
+            exit 0
+          fi
+          {
+            echo "APPLE_CERTIFICATE=$CERTIFICATE"
+            echo "APPLE_CERTIFICATE_PASSWORD=$CERTIFICATE_PASSWORD"
+            echo "APPLE_SIGNING_IDENTITY=$IDENTITY"
+          } >> "$GITHUB_ENV"
+          if [ -n "$API_KEY" ] && [ -n "$API_ISSUER" ] && [ -n "$API_KEY_P8" ]; then
+            key="$RUNNER_TEMP/AuthKey_$API_KEY.p8"
+            printf '%s\n' "$API_KEY_P8" > "$key"
+            {
+              echo "APPLE_API_KEY=$API_KEY"
+              echo "APPLE_API_ISSUER=$API_ISSUER"
+              echo "APPLE_API_KEY_PATH=$key"
+            } >> "$GITHUB_ENV"
+          else
+            echo "::warning::macOS build signed but not notarized: APPLE_API_KEY, APPLE_API_ISSUER or APPLE_API_KEY_P8 missing"
+          fi
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # Read by artifact-signing-cli (Windows only).
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+        with:
+          projectPath: apps/desktop
+          tauriScript: npx tauri
+          args: ${{ matrix.args }} --config src-tauri/tauri.release.conf.json
+          releaseId: ${{ needs.plan.outputs.release_id }}
+          includeUpdaterJson: true
+
+      # The proof, in the log: the installer, the MSI and the app as the MSI installs it carry
+      # Vallic d.o.o.'s Authenticode signature, timestamped (so it outlives the certificate, which
+      # Artifact Signing renews daily). The app is taken out of the MSI: the exe left in
+      # target/release isn't the signed one.
+      - name: Check the Windows signature
+        if: runner.os == 'Windows' && vars.ARTIFACT_SIGNING_PROFILE != ''
+        shell: pwsh
+        run: |
+          $msi = Get-ChildItem target/release/bundle/msi/*.msi | Select-Object -First 1
+          $setup = Get-ChildItem target/release/bundle/nsis/*-setup.exe | Select-Object -First 1
+          $unpacked = Join-Path $env:RUNNER_TEMP 'msi-files'
+          $p = Start-Process msiexec.exe -Wait -PassThru -ArgumentList '/a', "`"$($msi.FullName)`"", '/qn', "TARGETDIR=`"$unpacked`""
+          if ($p.ExitCode -ne 0) { Write-Error "unpacking the MSI: msiexec exited $($p.ExitCode)"; exit 1 }
+          $app = Get-ChildItem $unpacked -Recurse -Filter 'morphgate*.exe' | Select-Object -First 1
+          $files = @($setup, $msi, $app) | Where-Object { $_ }
+          $bad = 0
+          foreach ($f in $files) {
+            $s = Get-AuthenticodeSignature $f.FullName
+            '{0}: {1}; {2}; timestamped by {3}' -f $f.Name, $s.Status, $s.SignerCertificate.Subject, $s.TimeStamperCertificate.Subject
+            if ($s.Status -ne 'Valid' -or -not $s.TimeStamperCertificate) { $bad++ }
+          }
+          if ($files.Count -lt 3 -or $bad) { Write-Error "$bad of $($files.Count) files aren't signed and timestamped"; exit 1 }
+
+      # Tauri notarizes the app; the DMG it's downloaded in is notarized here too (Apple's advice:
+      # the outermost container), stapled, and put in the release in place of the one uploaded.
+      # Updates use the .app.tar.gz, which this leaves alone.
+      - name: Notarize the DMG
+        if: runner.os == 'macOS' && env.APPLE_API_KEY != ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ needs.plan.outputs.release_id }}
+        run: |
+          dmg=$(ls target/universal-apple-darwin/release/bundle/dmg/*.dmg | head -1)
+          status=$(xcrun notarytool submit "$dmg" --key "$APPLE_API_KEY_PATH" --key-id "$APPLE_API_KEY" \
+            --issuer "$APPLE_API_ISSUER" --wait --output-format json | jq -r .status)
+          [ "$status" = Accepted ] || { echo "::error::notarizing the DMG: $status"; exit 1; }
+          xcrun stapler staple "$dmg"
+          asset=$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets" --paginate \
+            --jq '.[] | select(.name | endswith(".dmg")) | "\(.id) \(.name)"' | head -1)
+          [ -n "$asset" ] || { echo "::error::the release has no DMG to replace"; exit 1; }
+          gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/assets/${asset%% *}"
+          gh api -X POST -H "Content-Type: application/x-apple-diskimage" \
+            "https://uploads.github.com/repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets?name=${asset#* }" \
+            --input "$dmg" --jq .browser_download_url
+
+      # The proof, in the log: signed with the Developer ID (hardened runtime, secure timestamp),
+      # notarized with the ticket stapled, and accepted by Gatekeeper as a downloaded app would be.
+      - name: Check the macOS signature
+        if: runner.os == 'macOS' && env.APPLE_SIGNING_IDENTITY != ''
+        shell: bash
+        run: |
+          bundle=target/universal-apple-darwin/release/bundle
+          app=$(ls -d "$bundle"/macos/*.app | head -1)
+          codesign --verify --deep --strict --verbose=2 "$app"
+          codesign -dv --verbose=4 "$app" 2>&1 | grep -E "^(Identifier|Authority|TeamIdentifier|Timestamp|CodeDirectory)"
+          plutil -p "$app/Contents/Info.plist" | grep -E "CFBundleIdentifier|NSLocalNetworkUsageDescription|LSMinimumSystemVersion"
+          if [ -n "${APPLE_API_KEY:-}" ]; then
+            xcrun stapler validate "$app"
+            spctl --assess --type execute --verbose=4 "$app"
+          fi
+          for dmg in "$bundle"/dmg/*.dmg; do
+            codesign -dv --verbose=2 "$dmg" 2>&1 | grep -E "^Authority"
+            if [ -n "${APPLE_API_KEY:-}" ]; then
+              xcrun stapler validate "$dmg"
+              spctl --assess --type open --context context:primary-signature --verbose=4 "$dmg"
+            fi
+          done
+
+  android:
+    name: Android
+    needs: plan
+    if: needs.plan.outputs.build == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+
+      - name: Release key
+        env:
+          KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          printf '%s' "$KEYSTORE" | base64 -d > "$RUNNER_TEMP/release.jks"
+          echo "MORPHGATE_ANDROID_KEYSTORE=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+
+      - name: Build
+        working-directory: apps/desktop
+        env:
+          MORPHGATE_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          MORPHGATE_ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          MORPHGATE_CHANNEL: ${{ needs.plan.outputs.channel }}
+          VERSION: ${{ needs.plan.outputs.version }}
+          BUILD_NUMBER: ${{ needs.plan.outputs.build_number }}
+        run: |
+          npm ci
+          export NDK_HOME="$ANDROID_NDK_LATEST_HOME"
+          if [ "$MORPHGATE_CHANNEL" = dev ]; then
+            # Its own app (com.morphgate.app.dev, morphgate-dev:// links), whose version code grows
+            # with every build.
+            config=$(printf '{"version":"%s","bundle":{"android":{"versionCode":%s}},"plugins":{"deep-link":{"mobile":[{"scheme":["morphgate-dev"],"appLink":false}]}}}' "$VERSION" "$BUILD_NUMBER")
+            name="morphgate-dev-$VERSION-arm64.apk"
+          else
+            config=$(printf '{"version":"%s"}' "$VERSION")
+            name="morphgate-$VERSION-arm64.apk"
+          fi
+          npx tauri android build --apk --target aarch64 --config "$config"
+          cp src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk "$RUNNER_TEMP/$name"
+          echo "APK=$RUNNER_TEMP/$name" >> "$GITHUB_ENV"
+
+      - name: Upload
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ needs.plan.outputs.release_id }}
+        run: |
+          gh api -X POST -H "Content-Type: application/vnd.android.package-archive" \
+            "https://uploads.github.com/repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets?name=$(basename "$APK")" \
+            --input "$APK" --jq .browser_download_url
+
+  # The iPhone and iPad app, signed for the App Store (Apple Distribution certificate and the App
+  # Store profile, RELEASING.md). There's no dev variant: App Store versions are at most three
+  # numbers, so dev builds go up as X.Y.Z, and the plan's build number tells them apart.
+  ios:
+    name: iOS
+    needs: plan
+    if: needs.plan.outputs.build == 'true' && needs.plan.outputs.ios == 'true'
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+
+      - name: Tools
+        run: |
+          xcodebuild -version
+          command -v xcodegen || brew install xcodegen
+
+      # Tauri signs with these in a keychain of its own, which it removes after.
+      - name: Build
+        working-directory: apps/desktop
+        env:
+          IOS_CERTIFICATE: ${{ secrets.IOS_CERTIFICATE }}
+          IOS_CERTIFICATE_PASSWORD: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
+          IOS_MOBILE_PROVISION: ${{ secrets.IOS_MOBILE_PROVISION }}
+          VERSION: ${{ needs.plan.outputs.version }}
+          BUILD_NUMBER: ${{ needs.plan.outputs.build_number }}
+        run: |
+          if [ -z "$IOS_CERTIFICATE" ] || [ -z "$IOS_MOBILE_PROVISION" ]; then
+            echo "::error::secrets IOS_CERTIFICATE, IOS_CERTIFICATE_PASSWORD and IOS_MOBILE_PROVISION are needed (RELEASING.md, iOS)"
+            exit 1
+          fi
+          npm ci
+          # Where the Rust library is put for Xcode (not in the repository).
+          mkdir -p src-tauri/gen/apple/Externals
+          config=$(printf '{"version":"%s","bundle":{"iOS":{"bundleVersion":"%s"}}}' "${VERSION%%-*}" "$BUILD_NUMBER")
+          npx tauri ios build --export-method app-store-connect --config "$config"
+
+      # The proof, in the log: signed by Vallic d.o.o.'s Apple Distribution certificate with the
+      # App Store profile, and the version and build number App Store Connect will see.
+      - name: Check the signature
+        working-directory: apps/desktop/src-tauri/gen/apple/build/arm64
+        run: |
+          unzip -q MorphGate.ipa -d "$RUNNER_TEMP/ipa"
+          app=$(ls -d "$RUNNER_TEMP"/ipa/Payload/*.app | head -1)
+          codesign --verify --deep --strict --verbose=2 "$app"
+          codesign -dv --verbose=4 "$app" 2>&1 | grep -E "^(Identifier|Authority|TeamIdentifier)"
+          security cms -D -i "$app/embedded.mobileprovision" | plutil -extract Name raw -o - -
+          plutil -p "$app/Info.plist" | grep -E "CFBundleIdentifier|CFBundleShortVersionString|CFBundleVersion|ITSAppUsesNonExemptEncryption"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ios
+          path: apps/desktop/src-tauri/gen/apple/build/arm64/MorphGate.ipa
+          retention-days: 7
+          if-no-files-found: error
+
+  # The upload, from Linux: Apple's processing takes a while, and macOS minutes cost 10×. The
+  # API key is the one that notarizes the Mac app.
+  testflight:
+    name: TestFlight
+    needs: [plan, ios]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ios
+          path: ${{ runner.temp }}/ios
+
+      - name: Upload
+        env:
+          ASC_KEY_ID: ${{ vars.APPLE_API_KEY }}
+          ASC_ISSUER_ID: ${{ vars.APPLE_API_ISSUER }}
+          KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+          VERSION: ${{ needs.plan.outputs.version }}
+          BUILD_NUMBER: ${{ needs.plan.outputs.build_number }}
+        run: |
+          export ASC_KEY_PATH="$RUNNER_TEMP/AuthKey.p8"
+          printf '%s\n' "$KEY_P8" > "$ASC_KEY_PATH"
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install -q "pyjwt[crypto]"
+          "$RUNNER_TEMP/venv/bin/python" scripts/upload-ios.py "$RUNNER_TEMP/ios/MorphGate.ipa" \
+            com.morphgate.app "${VERSION%%-*}" "$BUILD_NUMBER"

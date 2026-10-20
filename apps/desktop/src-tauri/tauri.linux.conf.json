@@ -1,0 +1,10 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "morphgate",
+  "bundle": {
+    "linux": {
+      "deb": { "desktopTemplate": "linux/morphgate.desktop" },
+      "rpm": { "desktopTemplate": "linux/morphgate.desktop" }
+    }
+  }
+}

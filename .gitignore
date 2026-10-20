@@ -1,0 +1,17 @@
+/target
+node_modules
+dist/
+apps/desktop/src-tauri/gen/schemas/
+# The iOS project's build output, user state and fetched code.
+apps/desktop/src-tauri/gen/apple/build/
+apps/desktop/src-tauri/gen/apple/Externals/
+apps/desktop/src-tauri/gen/apple/**/xcuserdata/
+.idea/workspace.xml
+.idea/shelf/
+*.log
+
+# Third-party notices, written by apps/desktop/scripts/licenses.mjs in every build.
+apps/desktop/src/generated/
+
+# Written by the release workflow (update feed of the repository being built).
+apps/desktop/src-tauri/tauri.release.conf.json

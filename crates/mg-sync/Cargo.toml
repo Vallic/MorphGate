@@ -1,0 +1,21 @@
+[package]
+name = "mg-sync"
+description = "vault-sync/v1 protocol types and HTTP client (zero-knowledge vault sync)"
+license = "Apache-2.0 OR MIT"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[features]
+default = ["client"]
+## The HTTP client; the reference server only needs the types.
+client = ["dep:reqwest", "dep:url"]
+
+[dependencies]
+base64 = "0.23.1"
+reqwest = { version = "0.13", features = ["json", "query"], optional = true }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+url = { version = "2.5.8", optional = true }

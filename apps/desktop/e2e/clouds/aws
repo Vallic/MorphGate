@@ -1,0 +1,33 @@
+#!/bin/sh
+# A stand-in for the AWS CLI (e2e; run.sh puts this folder in MORPHGATE_CLOUD_CLI_DIR): an
+# account, one region, and its instances: one running whose "public address" is the e2e sshd
+# (its port and user in the morphgate: tags, its key pair the vault's e2e_key), one stopped
+# without an address. Session Manager carries a connection to the e2e sshd, as the real one
+# would to the instance.
+case "$*" in
+*"ssm start-session --target i-0e2e "*"--document-name AWS-StartSSHSession"*)
+  exec python3 -I "$(dirname "$0")/../../../../crates/mg-ssh/tests/relay.py" 127.0.0.2 "$E2E_CLOUD_PORT"
+  ;;
+*"sts get-caller-identity"*)
+  echo '{"UserId": "AIDAE2E", "Account": "123456789012", "Arn": "arn:aws:iam::123456789012:user/e2e"}'
+  ;;
+*"ec2 describe-regions"*)
+  echo '{"Regions": [{"RegionName": "eu-central-1", "OptInStatus": "opt-in-not-required"}]}'
+  ;;
+*"ec2 describe-instances"*)
+  cat <<EOF
+{"Reservations": [{"Instances": [
+  {"InstanceId": "i-0e2e", "State": {"Code": 16, "Name": "running"},
+   "PublicIpAddress": "127.0.0.2", "PublicDnsName": "", "PrivateIpAddress": "10.0.0.5", "KeyName": "e2e_key",
+   "Tags": [{"Key": "Name", "Value": "e2e-ec2"}, {"Key": "morphgate:user", "Value": "$E2E_CLOUD_USER"},
+            {"Key": "morphgate:port", "Value": "$E2E_CLOUD_PORT"}]},
+  {"InstanceId": "i-0bad", "State": {"Code": 80, "Name": "stopped"},
+   "PublicDnsName": "", "PrivateIpAddress": "10.0.0.6", "Tags": [{"Key": "Name", "Value": "e2e-stopped"}]}
+]}]}
+EOF
+  ;;
+*)
+  echo "aws (e2e stand-in): no answer for: $*" >&2
+  exit 2
+  ;;
+esac

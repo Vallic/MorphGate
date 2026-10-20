@@ -1,0 +1,13 @@
+# gitleaks (https://github.com/gitleaks/gitleaks): the default rules, minus the tests' own key
+# material, made for the tests. `gitleaks git .` and `gitleaks dir .` read this file.
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "OpenVPN test certificates and keys"
+paths = ['''crates/mg-vpn/src/openvpn/testdata/''']
+
+[[allowlists]]
+description = "The WireGuard tests' private key"
+regexes = ['''yAnz5TF\+lXXJte14tji3zlMNq\+hd2rYUIgJBgB3fBmk=''']

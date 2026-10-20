@@ -1,0 +1,27 @@
+[package]
+name = "mg-store"
+description = "MorphGate local vault: encrypted items in SQLite"
+license = "MPL-2.0"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[features]
+## `Remote` implementation over the vault-sync/v1 HTTP client.
+## plus the account flows (password change, recovery, sign-in) against a server.
+http = ["dep:mg-sync", "dep:tokio"]
+
+[dependencies]
+mg-sync = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true }
+mg-vault.workspace = true
+rusqlite = { version = "0.40.2", features = ["bundled"] }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+ulid = "3.0.0"
+zeroize = "1.9.1"
+
+[dev-dependencies]
+tempfile = "3.27.0"
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

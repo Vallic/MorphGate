@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Merged into the iOS app's Info.plist by Tauri (with Info.plist). -->
+<plist version="1.0">
+<dict>
+  <!-- Export compliance: standard encryption only (RELEASING.md, iOS). -->
+  <key>ITSAppUsesNonExemptEncryption</key>
+  <false/>
+  <!-- Exports, attachments and recordings are saved in the app's Documents folder: the Files
+       app shows it as MorphGate's (On My iPhone / On My iPad). -->
+  <key>UIFileSharingEnabled</key>
+  <true/>
+  <key>LSSupportsOpeningDocumentsInPlace</key>
+  <true/>
+  <!-- Shown when MorphGate first asks for Face ID (unlocking the vault; Security). -->
+  <key>NSFaceIDUsageDescription</key>
+  <string>MorphGate uses Face ID to unlock your vault without the master password.</string>
+</dict>
+</plist>

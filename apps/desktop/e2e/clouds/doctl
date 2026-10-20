@@ -1,0 +1,21 @@
+#!/bin/sh
+# A stand-in for DigitalOcean's doctl (e2e; run.sh puts this folder in MORPHGATE_CLOUD_CLI_DIR):
+# an account, and one droplet whose public address is the e2e sshd (its user and port in
+# morphgate- tags).
+case "$*" in
+*"account get"*)
+  echo '{"email": "e2e@example.com", "uuid": "e2e", "status": "active", "team": {"uuid": "t", "name": "E2E"}}'
+  ;;
+*"compute droplet list"*)
+  cat <<EOF
+[{"id": 101, "name": "e2e-droplet", "status": "active",
+  "networks": {"v4": [{"ip_address": "127.0.0.2", "type": "public"}, {"ip_address": "10.0.0.9", "type": "private"}], "v6": []},
+  "region": {"name": "Frankfurt 1", "slug": "fra1"},
+  "tags": ["web", "morphgate-user:$E2E_CLOUD_USER", "morphgate-port:$E2E_CLOUD_PORT"]}]
+EOF
+  ;;
+*)
+  echo "doctl (e2e stand-in): no answer for: $*" >&2
+  exit 2
+  ;;
+esac

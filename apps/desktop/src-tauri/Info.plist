@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Merged into the app's Info.plist by Tauri (macOS). -->
+<plist version="1.0">
+<dict>
+  <!-- macOS 15 asks before an app connects to devices on the local network (Apple's TN3179). -->
+  <key>NSLocalNetworkUsageDescription</key>
+  <string>MorphGate connects to the hosts you add, including ones on your local network.</string>
+</dict>
+</plist>

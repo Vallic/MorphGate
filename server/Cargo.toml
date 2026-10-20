@@ -1,0 +1,38 @@
+[package]
+name = "vault-sync-server"
+description = "Reference vault-sync/v1 server: a single binary with SQLite"
+license = "AGPL-3.0-only"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+argon2 = "0.6.0"
+axum = "0.8"
+base64 = "0.23.1"
+getrandom = "0.4.3"
+hmac = "0.13.0"
+mg-sync = { workspace = true, default-features = false }
+rusqlite = { version = "0.40.2", features = ["bundled"] }
+serde.workspace = true
+serde_json.workspace = true
+sha2 = "0.11.1"
+thiserror.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "signal"] }
+tracing.workspace = true
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+ulid = "3.0.0"
+# Single sign-on: the identity provider's discovery, token and key set, and RS256 ID tokens.
+aws-lc-rs = "1.18.2"
+reqwest = { version = "0.13", features = ["json", "form"] }
+url = "2.5.8"
+
+[dev-dependencies]
+reqwest = { version = "0.13", features = ["json", "form"] }
+mg-store = { path = "../crates/mg-store", features = ["http"] }
+sha1 = "0.11.0"
+mg-vault = { path = "../crates/mg-vault" }
+mg-sync = { path = "../crates/mg-sync" }
+tempfile = "3.27.0"
+zeroize = "1.9.1"
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

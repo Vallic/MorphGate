@@ -1,0 +1,8 @@
+{
+  "default": "morphgate-app-icon.svg",
+  "bg_color": "#0A1113",
+  "android_fg": "morphgate-android-foreground.svg",
+  "android_bg": "morphgate-android-background.svg",
+  "android_fg_scale": 66,
+  "android_monochrome": "morphgate-android-monochrome.svg"
+}
