@@ -144,6 +144,14 @@ First release.
   in the device's keychain, which releases it only after Face ID (or Touch ID, or the passcode).
 - Quick connect takes the key from a file you choose or from pasted text, on phones too, and
   can save the host to the vault with its key.
+- A host key that an `@revoked` line in known_hosts names is refused outright, even one trusted
+  before; so is a host certificate whose key or CA is revoked.
+- Sync talks to a server over https:// only; plain http:// works just for a server on this
+  computer (localhost). A server can't ask the app for key derivation beyond 1 GiB of memory,
+  10 passes or a 64-byte salt.
+- A copied recovery key is cleared from the clipboard when you continue (and after a minute on
+  the screen, where the system allows it).
+- Android: the app's data stays out of Android's backups and device-to-device transfers.
 - Android: unlock with your fingerprint or face (Security). The key that opens the vault is kept
   in the phone's Keystore and released only after Android's biometric check; adding or removing
   a fingerprint or face turns it off until you unlock once with the master password. The phone

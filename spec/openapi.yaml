@@ -27,7 +27,7 @@ info:
     name: CC0-1.0
     identifier: CC0-1.0
 servers:
-  - url: https://sync.morphgate.com/v1
+  - url: https://morphgate.com/v1
     description: Hosted
   - url: https://{host}/v1
     description: Self-hosted
@@ -55,7 +55,7 @@ paths:
       - url: https://{host}
         variables:
           host:
-            default: sync.morphgate.com
+            default: morphgate.com
     get:
       tags: [discovery]
       operationId: getCapabilities
@@ -250,7 +250,7 @@ paths:
               properties:
                 auth_key: { $ref: '#/components/schemas/B64' }
       responses:
-        '204': { description: Deleted, with every token. }
+        '204': { description: "Deleted, with every token." }
         '401': { $ref: '#/components/responses/Error' }
         '409':
           description: '`sole_owner`: the account owns an organization; transfer or delete it first.'
@@ -1258,7 +1258,7 @@ paths:
         '200':
           description: The blob
           headers:
-            ETag: { schema: { type: string }, description: The hash, quoted }
+            ETag: { schema: { type: string }, description: "The hash, quoted" }
             X-Blob-Kind: { schema: { enum: [attachment, session_log] } }
             Cache-Control: { schema: { const: no-store } }
           content:
@@ -1372,7 +1372,7 @@ components:
       name: token
       in: path
       required: true
-      schema: { type: string, description: 32 random bytes, base64url }
+      schema: { type: string, description: "32 random bytes, base64url" }
     BlobHash:
       name: hash
       in: path

@@ -23,6 +23,11 @@ impl KdfParams {
     pub const MIN_M_KIB: u32 = 64 * 1024;
     pub const MIN_T: u32 = 2;
     pub const MIN_SALT_LEN: usize = 16;
+    /// Ceilings, for the same reason the other way: a server mustn't be able to make a device
+    /// allocate or compute without bound before it can say no. Well above the defaults.
+    pub const MAX_M_KIB: u32 = 1024 * 1024;
+    pub const MAX_T: u32 = 10;
+    pub const MAX_SALT_LEN: usize = 64;
 
     /// Defaults for new accounts: 256 MiB, 3 passes, 1 lane.
     pub fn recommended() -> Result<Self> {
@@ -36,16 +41,25 @@ impl KdfParams {
 
     pub fn validate(&self) -> Result<()> {
         if self.m_kib < Self::MIN_M_KIB {
-            return Err(Error::WeakKdf("memory cost below 64 MiB"));
+            return Err(Error::KdfRejected("memory cost below 64 MiB"));
+        }
+        if self.m_kib > Self::MAX_M_KIB {
+            return Err(Error::KdfRejected("memory cost above 1 GiB"));
         }
         if self.t < Self::MIN_T {
-            return Err(Error::WeakKdf("fewer than 2 passes"));
+            return Err(Error::KdfRejected("fewer than 2 passes"));
+        }
+        if self.t > Self::MAX_T {
+            return Err(Error::KdfRejected("more than 10 passes"));
         }
         if self.p == 0 || self.p > 16 {
-            return Err(Error::WeakKdf("parallelism must be 1..=16"));
+            return Err(Error::KdfRejected("parallelism must be 1..=16"));
         }
         if self.salt.len() < Self::MIN_SALT_LEN {
-            return Err(Error::WeakKdf("salt shorter than 16 bytes"));
+            return Err(Error::KdfRejected("salt shorter than 16 bytes"));
+        }
+        if self.salt.len() > Self::MAX_SALT_LEN {
+            return Err(Error::KdfRejected("salt longer than 64 bytes"));
         }
         Ok(())
     }
@@ -135,7 +149,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn weak_parameters_are_rejected() {
+    fn parameters_out_of_bounds_are_rejected() {
         let cases = [
             KdfParams {
                 m_kib: 1024,
@@ -153,10 +167,26 @@ pub(crate) mod tests {
                 salt: vec![0; 8],
                 ..fast_params()
             },
+            // Ceilings: checked before anything is allocated.
+            KdfParams {
+                m_kib: KdfParams::MAX_M_KIB + 1,
+                ..fast_params()
+            },
+            KdfParams {
+                t: KdfParams::MAX_T + 1,
+                ..fast_params()
+            },
+            KdfParams {
+                salt: vec![0; KdfParams::MAX_SALT_LEN + 1],
+                ..fast_params()
+            },
         ];
         for params in cases {
             assert!(
-                matches!(MasterKey::derive(b"pw", &params), Err(Error::WeakKdf(_))),
+                matches!(
+                    MasterKey::derive(b"pw", &params),
+                    Err(Error::KdfRejected(_))
+                ),
                 "{params:?}"
             );
         }

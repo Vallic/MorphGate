@@ -96,7 +96,7 @@ signed with the key above.
 
 ## Code signing
 
-Where the certificates below aren't set up, builds are unsigned:
+A production release (`main`) is signed on every platform or not built: the Plan job stops when any of the secrets and variables below is missing. Dev builds go unsigned where they aren't set up:
 - **macOS**: Gatekeeper blocks the first launch. Users right-click → Open, or System
   Settings → Privacy & Security → Open Anyway.
 - **Windows**: SmartScreen shows "Windows protected your PC". Users choose More info → Run

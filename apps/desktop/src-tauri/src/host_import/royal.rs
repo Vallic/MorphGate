@@ -46,7 +46,11 @@ fn unpack(bytes: &[u8]) -> Result<Vec<u8>, String> {
         [b'P', b'K', 3, 4, ..] => {
             let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes))
                 .map_err(|e| format!("the document can't be unpacked: {e}"))?;
-            let names: Vec<String> = zip.file_names().map(str::to_owned).collect();
+            let names = zip
+                .file_names()
+                .map(|n| n.map(|n| n.into_owned()))
+                .collect::<Result<Vec<String>, _>>()
+                .map_err(|e| format!("the document can't be unpacked: {e}"))?;
             let entry = names
                 .iter()
                 .find(|n| n.to_lowercase().ends_with(".xml"))
@@ -484,6 +488,18 @@ mod tests {
             ("pi", "raspberry", 2200)
         );
         assert_eq!(pi.group.as_deref(), Some("Lab"));
+
+        // Zip: the XML entry is read, whatever else the archive holds.
+        let mut zipped = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        let stored = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        zipped.start_file("thumbnail.png", stored).unwrap();
+        std::io::Write::write_all(&mut zipped, b"\x89PNG").unwrap();
+        zipped.start_file("Lab.xml", stored).unwrap();
+        std::io::Write::write_all(&mut zipped, nested.as_bytes()).unwrap();
+        let bytes = zipped.finish().unwrap().into_inner();
+        let loaded = load("lab.rtsz".into(), &bytes).unwrap();
+        assert_eq!(loaded.plan.hosts[&loaded.listed[0]].hostname, "raspberry");
 
         let refused = load("x.rtsz".into(), b"\x00\x01encrypted")
             .map(|_| ())

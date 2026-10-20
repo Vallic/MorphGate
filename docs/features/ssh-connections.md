@@ -87,7 +87,7 @@ The connect timeout pauses while a prompt is open. A key of another type than th
 | `<data folder>/known_hosts` (`SshState::new`) | The app's own: read and written. Created with its folder on the first accepted key. Entries are `host type base64`, or `[host]:port type base64` off port 22, not hashed |
 | `~/.ssh/known_hosts` (`KnownHosts::openssh_default`) | Read only, never changed. Hashed (`\|1\|…`) entries match |
 
-Both files' `@cert-authority` lines count as host CAs. Host keys stay on the device and don't sync; host CA items do.
+Both files' `@cert-authority` lines count as host CAs. An `@revoked` line in either file (for hosts its patterns cover; hashed names aren't patterns) refuses that key outright, before any pin, CA or prompt: a revoked host key, or a host certificate whose key or signing CA is revoked, fails with "the host key of {host}:{port} ({fingerprint}) is revoked in {file}:{line}: refused" (`KnownHosts::revoked`, `HostKeyCheck::Revoked`). Host keys stay on the device and don't sync; host CA items do.
 
 ### The dialogs
 
@@ -201,7 +201,7 @@ Connection errors are `mg_ssh::Error`'s text, written in red in the tab.
 ## Not built
 
 - `~/.ssh/config` is not read when connecting: it is only an import source, so `ServerAliveInterval`, `IdentityFile` and the like matter only as far as the import maps them.
-- Plain `known_hosts` lines match the host name literally (or hashed); wildcard patterns there are not matched, and `@revoked` lines are ignored. Hosts are recorded as written in the host item, unhashed.
+- Plain `known_hosts` lines match the host name literally (or hashed); wildcard patterns there are not matched. Hosts are recorded as written in the host item, unhashed.
 - Keyboard-interactive answers only hidden prompts, all with the password: a one-time code can't be entered.
 - No X11 forwarding (imports list it as unsupported), no GSSAPI/Kerberos sign-in.
 - Quick connect has no jump host, VPN, proxy command or certificate.
@@ -211,7 +211,7 @@ Connection errors are `mg_ssh::Error`'s text, written in red in the tab.
 
 | Where | Covers |
 | --- | --- |
-| `crates/mg-ssh/src/known_hosts.rs` | Unknown, learned, trusted; a changed key caught in a read-only file without creating the app's; pinned key by host and line; OpenSSH fingerprints; host pattern matching; `@cert-authority` lines and vault CAs; host certificate checks |
+| `crates/mg-ssh/src/known_hosts.rs` | Unknown, learned, trusted; a changed key caught in a read-only file without creating the app's; pinned key by host and line; OpenSSH fingerprints; host pattern matching; `@cert-authority` lines and vault CAs; host certificate checks; `@revoked` keys refused, over a pinned key too |
 | `crates/mg-ssh/src/proxy_command.rs` | Token expansion, refused host and user names, bytes both ways, stderr as the error |
 | `crates/mg-ssh/src/connection.rs` | The macOS local-network hint |
 | `apps/desktop/src-tauri/src/ssh.rs`, `proxy.rs`, `host_cas.rs` | A synced proxy command waits for allowing; tmux names; request shapes match the webview; a changed command asks again; parsing a CA key or `@cert-authority` line |

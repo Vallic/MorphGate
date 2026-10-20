@@ -52,7 +52,7 @@ The vault and `known_hosts` live in Tauri's `app_data_dir()`, the platform's dat
 | Linux | `$XDG_DATA_HOME/com.morphgate.desktop/`, by default `~/.local/share/com.morphgate.desktop/` |
 | macOS | `~/Library/Application Support/com.morphgate.desktop/` |
 | Windows | `%APPDATA%\com.morphgate.desktop\` |
-| Android | The app's private storage for `com.morphgate.app`; uninstalling removes it |
+| Android | The app's private storage for `com.morphgate.app`; uninstalling removes it. Android's backups leave it out (`allowBackup="false"`, and `res/xml/data_extraction_rules.xml` for cloud backup and device-to-device transfer on Android 12 and newer): the vault and the unlock key sealed by this phone's Keystore stay on the phone |
 | iOS, iPadOS | `Library/Application Support/com.morphgate.app/` inside the app's container, not shown in Files |
 
 Dev builds use the `.dev` identifiers, so their vault is separate. Files the app saves for the person (vault and account exports, attachments, recordings) go elsewhere: `util::download_path()` picks the Downloads folder (the home folder without one) and never overwrites, adding `-2`, `-3`; on iOS it is the app's Documents folder, and the app says "x.json in Files › MorphGate". SFTP downloads on a phone go to `downloadDir()`.

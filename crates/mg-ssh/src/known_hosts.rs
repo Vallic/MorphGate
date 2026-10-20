@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use russh::keys::ssh_key::certificate::CertType;
+use russh::keys::ssh_key::public::KeyData;
 use russh::keys::{Certificate, HashAlg, PublicKey, known_hosts};
 
 use crate::{Error, Result};
@@ -96,13 +97,19 @@ fn matches(patterns: &[String], host: &str, port: u16, any_port: bool) -> bool {
 
 /// The `@cert-authority` lines of a known_hosts file (hashed host names can't be patterns).
 fn file_authorities(path: &Path) -> Vec<HostAuthority> {
+    marked(path, "@cert-authority")
+}
+
+/// A known_hosts file's lines with `marker` (`@cert-authority`, `@revoked`): their host
+/// patterns and key. Hashed host names are skipped: they can't be patterns.
+fn marked(path: &Path, marker: &str) -> Vec<HostAuthority> {
     let Ok(text) = std::fs::read_to_string(path) else {
         return Vec::new();
     };
     let mut out = Vec::new();
     for (n, line) in text.lines().enumerate() {
         let mut words = line.split_whitespace();
-        if words.next() != Some("@cert-authority") {
+        if words.next() != Some(marker) {
             continue;
         }
         let (Some(hosts), Some(kind), Some(data)) = (words.next(), words.next(), words.next())
@@ -160,6 +167,10 @@ pub(crate) fn certified(
 pub enum HostKeyCheck {
     Trusted,
     Unknown,
+    /// An `@revoked` line names this key for the host: never accepted, whatever else says so.
+    Revoked {
+        from: String,
+    },
     /// A different key of the same algorithm is recorded: possible MITM.
     Changed {
         path: PathBuf,
@@ -251,8 +262,21 @@ impl KnownHosts {
         &self.primary
     }
 
-    /// A changed key in any file wins over a match elsewhere: we fail closed.
+    /// Where an `@revoked` line names `key` for `host:port` (`file:line`), if one does.
+    pub fn revoked(&self, host: &str, port: u16, key: &KeyData) -> Option<String> {
+        std::iter::once(&self.primary)
+            .chain(&self.read_only)
+            .flat_map(|path| marked(path, "@revoked"))
+            .find(|r| r.key.key_data() == key && matches(&r.patterns, host, port, false))
+            .map(|r| r.from)
+    }
+
+    /// A revoked key is refused before anything else; a changed key in any file wins over a
+    /// match elsewhere: we fail closed.
     pub fn check(&self, host: &str, port: u16, key: &PublicKey) -> Result<HostKeyCheck> {
+        if let Some(from) = self.revoked(host, port, key.key_data()) {
+            return Ok(HostKeyCheck::Revoked { from });
+        }
         let key = &bare(key);
         let mut trusted = false;
         for path in std::iter::once(&self.primary).chain(&self.read_only) {
@@ -419,10 +443,16 @@ mod tests {
         );
         assert!(kh.authorities_for("bastion.example.com", 22).is_empty());
         assert!(kh.authorities_for("web.example.com", 2222).is_empty());
-        // The plain-key check reads past those lines.
+        // The key on the `@revoked` line is refused, for any host its pattern covers; another
+        // key is still unknown.
         let key = PublicKey::from_openssh(data("other.pub").trim()).unwrap();
-        assert_eq!(
+        assert!(matches!(
             kh.check("web.example.com", 22, &key).unwrap(),
+            HostKeyCheck::Revoked { from } if from.ends_with("known_hosts:3")
+        ));
+        let ca = PublicKey::from_openssh(data("user-ca.pub").trim()).unwrap();
+        assert_eq!(
+            kh.check("web.example.com", 22, &ca).unwrap(),
             HostKeyCheck::Unknown
         );
         // The vault's: a bare pattern on any port.
@@ -437,6 +467,30 @@ mod tests {
 
     fn key(s: &str) -> PublicKey {
         PublicKey::from_openssh(s).unwrap()
+    }
+
+    /// A key learned (trusted on first use) is refused once an `@revoked` line names it, in
+    /// the app's own file or in `~/.ssh/known_hosts`, for the hosts its pattern covers.
+    #[test]
+    fn revocation_wins_over_a_pinned_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let openssh = dir.path().join("openssh_known_hosts");
+        std::fs::write(&openssh, "").unwrap();
+        let kh = KnownHosts::new(dir.path().join("known_hosts")).with_read_only(&openssh);
+        kh.learn("example.com", 22, &key(KEY_A)).unwrap();
+        assert_eq!(
+            kh.check("example.com", 22, &key(KEY_A)).unwrap(),
+            HostKeyCheck::Trusted
+        );
+        std::fs::write(&openssh, format!("@revoked *.com,example.com {KEY_A}\n")).unwrap();
+        assert!(matches!(
+            kh.check("example.com", 22, &key(KEY_A)).unwrap(),
+            HostKeyCheck::Revoked { from } if from.ends_with("openssh_known_hosts:1")
+        ));
+        assert_eq!(
+            kh.check("example.org", 22, &key(KEY_A)).unwrap(),
+            HostKeyCheck::Unknown
+        );
     }
 
     #[test]

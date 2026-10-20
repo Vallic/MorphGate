@@ -24,15 +24,15 @@ A fully compromised server, ours or a self-hoster's, learns metadata only: accou
 
 | Adversary | Can | Cannot |
 | --- | --- | --- |
-| Malicious / breached server | Read ciphertext and metadata, drop or replay old blobs, deny service | Decrypt items, forge items (AEAD + signatures), silently roll back past a client's known revision |
-| Network attacker | Nothing beyond TLS failure | Anything: TLS required, plus E2E |
+| Malicious / breached server | Read ciphertext and metadata, drop or replay old blobs, deny service | Decrypt items, forge items (AEAD + signatures), make a client accept a vault revision below one it has seen |
+| Network attacker | Nothing beyond TLS failure | Anything: TLS required (the client refuses plain `http://` except to this computer), plus E2E |
 | Stolen unlocked device | Everything in that vault | Survive revocation for future changes |
 | Stolen locked device | Offline brute-force of master password | Succeed quickly (Argon2id, high cost) |
 | Malicious self-host operator | Same as breached server | Same as breached server |
 
-**Rollback defense.** Each client remembers the highest vault revision it has seen. A server answering with a lower one is flagged as an error, not silently accepted.
+**Rollback defense.** Each client remembers the highest vault revision it has seen. A server answering with a lower one is flagged as an error, not silently accepted. The rollback guard covers the vault's revision, not each item's history.
 
-**KDF downgrade defense.** KDF parameters come from the server at prelogin, so the client enforces floors (≥ 64 MiB, ≥ 2 passes, ≥ 16-byte salt) and refuses to derive below them.
+**KDF bounds.** KDF parameters come from the server at prelogin, so the client enforces floors (≥ 64 MiB, ≥ 2 passes, ≥ 16-byte salt) and refuses to derive below them, and ceilings (≤ 1 GiB, ≤ 10 passes, ≤ 64-byte salt), so a server can't make a device allocate or compute without bound.
 
 **Metadata hygiene.** Item type and size are inside the ciphertext where possible. Padding to 256-byte buckets hides exact sizes.
 
