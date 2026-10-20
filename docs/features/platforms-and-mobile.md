@@ -126,7 +126,7 @@ Editors and settings open full screen with a back button. Sessions stay mounted,
 
 ## Linux polkit action
 
-On Linux, "confirm it's you" goes through polkit, which needs MorphGate's action installed: `com.morphgate.desktop.unlock`, in `/usr/share/polkit-1/actions/com.morphgate.desktop.policy` (source `crates/mg-presence/polkit/com.morphgate.desktop.policy`).
+On Linux, "confirm it's you" goes through polkit, which needs MorphGate's action installed: `com.morphgate.desktop.unlock`, in `/usr/share/polkit-1/actions/com.morphgate.desktop.policy` (source `crates/mg-presence/polkit/com.morphgate.desktop.policy`). The deb and rpm packages install it; the dev packages ship the same file, so a dev and a release deb or rpm can't be installed together (AppImages can).
 
 | Setting | Value | Why |
 | --- | --- | --- |

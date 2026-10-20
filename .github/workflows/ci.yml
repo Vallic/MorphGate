@@ -1,10 +1,12 @@
 name: CI
 
 # Pull requests into develop (features) and into main (releases) run the tests; a manual run
-# (Actions → CI → Run workflow) does too. A fork's pull request runs on GitHub's runners only,
-# and only once a maintainer approves the run (Settings → Actions → "Require approval for all
-# external contributors"). The macOS and Windows builds, the slow ones, only run for pull
-# requests into main and manual runs.
+# (Actions → CI → Run workflow) does too. A fork's pull request runs only once a maintainer
+# approves the run (Settings → Actions → "Require approval for all external contributors"). The
+# macOS and Windows builds, the slow ones, only run for pull requests into main and manual runs.
+# The branch rules require these checks by name: "Lint, test, live SSH and VPN", "End to end
+# (Linux)", "Android build", "Desktop" and "Signed off"; renaming a job means changing the
+# rules too.
 on:
   pull_request:
     branches: [develop, main]
@@ -13,6 +15,10 @@ on:
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
+
+# CI only reads the repository.
+permissions:
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -168,6 +174,44 @@ jobs:
           npm run build
       - run: cargo clippy -p morphgate-desktop -p mg-presence --all-targets -- -D warnings
       - run: cargo test -p mg-presence -p mg-store -p mg-vault -- --nocapture
+
+  # One check the branch rules can require: the matrix above runs only for pull requests into
+  # main, and a skipped matrix reports under its unexpanded name, which no rule can match.
+  desktop-result:
+    name: Desktop
+    needs: desktop
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - name: The macOS and Windows builds passed, or didn't run
+        env:
+          RESULT: ${{ needs.desktop.result }}
+        run: '[ "$RESULT" = success ] || [ "$RESULT" = skipped ] || { echo "::error::the macOS and Windows builds: $RESULT"; exit 1; }'
+
+  # Every commit carries a Signed-off-by line: the Developer Certificate of Origin
+  # (CONTRIBUTING.md). GitHub's own setting covers only commits made on its website.
+  signoff:
+    name: Signed off
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Every commit is signed off
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          commits=$(git rev-list --no-merges "$BASE..$HEAD")
+          bad=0
+          for c in $commits; do
+            if ! git show -s --format=%B "$c" | grep -q '^Signed-off-by: '; then
+              echo "::error::$(git show -s --format='%h %s' "$c"): no Signed-off-by line (git commit -s; CONTRIBUTING.md)"
+              bad=1
+            fi
+          done
+          exit $bad
 
   # The packaged app, driven over WebDriver in a headless compositor: AppImage (with a signed
   # self-update), deb, rpm, two people sharing a team vault through the reference sync server,

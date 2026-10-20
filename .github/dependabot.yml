@@ -1,0 +1,42 @@
+# Dependency updates as pull requests into develop, grouped so a week brings a few pull requests
+# rather than dozens (each runs the full CI). Security fixes come as soon as GitHub knows of them,
+# whatever this schedule says.
+#
+# Tauri is left out on both sides: its Rust crates and its npm packages must be on the same
+# version (`tauri build` refuses a mismatch), so they're updated by hand, together.
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    target-branch: develop
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    ignore:
+      - dependency-name: "tauri*"
+    groups:
+      crates:
+        update-types: [minor, patch]
+
+  - package-ecosystem: npm
+    directory: /apps/desktop
+    target-branch: develop
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    ignore:
+      - dependency-name: "@tauri-apps/*"
+    groups:
+      npm:
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    target-branch: develop
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ["*"]

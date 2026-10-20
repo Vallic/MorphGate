@@ -8,10 +8,6 @@ Two branches, two channels. Work goes into `develop` through pull requests; `dev
 | `develop` | every push | the `dev` **pre-release**, replaced each time, version `X.Y.Z-<build>` | **MorphGate Dev**: its own app id (`com.morphgate.desktop.dev`, `com.morphgate.app.dev`), data and update feed, so it installs next to the release |
 | `main` | every push | a **draft** release `vX.Y.Z` (the version in `Cargo.toml`) | MorphGate |
 
-Pull requests into `develop` and into `main` run [CI](.github/workflows/ci.yml): lint, unit
-and live tests, the end-to-end run of the packaged Linux app, and the Android build; pull requests
-into `main` also build on macOS and Windows.
-
 [`.github/workflows/release.yml`](.github/workflows/release.yml) builds:
 
 | Platform | Installers | Updates itself from |
@@ -19,7 +15,7 @@ into `main` also build on macOS and Windows.
 | Linux x86_64, arm64 | `.AppImage`, `.deb`, `.rpm` | the same format (deb/rpm ask for an administrator password) |
 | macOS (universal) | `.dmg` | `.app.tar.gz` |
 | Windows x64 | `-setup.exe` (NSIS), `.msi` | the NSIS installer, run in passive mode |
-| Android arm64 | `.apk`, signed with the release key | (sideloaded for now: a new APK installs over the old one) |
+| Android arm64 | `.apk`, signed with the release key | a newer APK installed over it; Google Play's installs from Play |
 | iOS, iPadOS | none here: uploaded to TestFlight ([below](#ios-testflight)) | the App Store, once a build is submitted there |
 
 plus a `.sig` file for each update bundle and `latest.json`. Production apps read
@@ -32,59 +28,46 @@ use the dev AppImage. Dev builds are Linux and Android unless a manual run (Acti
 `develop`; `gh workflow run release.yml --ref develop -f platforms=all`) picks *platforms*
 `all`, `macos`, `windows` or `ios`, or the repository variable `DEV_ALL_PLATFORMS` is `true`
 (all of them; they're the slow builds). A dev iOS build goes to TestFlight like a production
-one. Linux arm64 builds only on a public repository (GitHub's arm64 runner is free only there).
+one. Linux arm64 builds only for production releases, and only on a public repository (GitHub's
+arm64 runner is free only there).
 
-The deb and rpm packages also install MorphGate's polkit action
-(`/usr/share/polkit-1/actions/com.morphgate.desktop.policy`), which "Ask for system
-authentication before unlocking" uses on Linux. The dev packages ship the same file, so a dev and
-a release deb/rpm can't be installed together (AppImages can).
+Dev versions (`X.Y.Z-<build>`), the dev Android app's version code and iOS build numbers all use
+the build number: the workflow's run number plus the repository variable `RUN_NUMBER_OFFSET`
+(50 here, the last run of the repository before this one). Each must keep growing: Android
+installs only a higher version code, the updater only a higher version, and TestFlight takes each
+build number of a version once.
 
-## One-time setup
+## Secrets and keys
 
-1. The repository: `git@github.com:Vallic/MorphGate.git` (the Vallic organization), branches `main` and `develop`.
-   Public, its Actions run a fork's pull request only once a maintainer approves it (GitHub
-   allows this setting only on public repositories):
+Set in Settings → Secrets and variables → Actions, from the keys kept outside the repository:
 
-   ```sh
-   gh api -X PUT repos/Vallic/MorphGate/actions/permissions/fork-pr-contributor-approval \
-     -f approval_policy=all_external_contributors
-   ```
+```sh
+gh secret set TAURI_SIGNING_PRIVATE_KEY < ~/.tauri/morphgate-updater.key
+gh secret set TAURI_SIGNING_PRIVATE_KEY_PASSWORD < ~/.tauri/morphgate-updater.key.password
+base64 -w0 ~/.android/morphgate-release.jks | gh secret set ANDROID_KEYSTORE_BASE64
+gh secret set ANDROID_KEYSTORE_PASSWORD < ~/.android/morphgate-release.password
+gh secret set ANDROID_KEY_ALIAS --body morphgate
+```
 
-   The repository variable `RUN_NUMBER_OFFSET` (0 when unset) is added to the release workflow's
-   run number to make the build number: of dev versions (`X.Y.Z-<build>`), the dev Android app's
-   version code and iOS builds. Each must keep growing: Android installs only a higher version
-   code, the updater only a higher version, and TestFlight takes each build number of a version
-   once. A new repository's runs start at 1 again, so set it to the old repository's last
-   release run number (`gh variable set RUN_NUMBER_OFFSET --body <that number>`).
-2. Secrets (Settings → Secrets and variables → Actions), set from the keys kept outside the
-   repository:
+(The Apple, Azure and iOS ones are under [Code signing](#code-signing) and [iOS](#ios-testflight).)
 
-   ```sh
-   gh secret set TAURI_SIGNING_PRIVATE_KEY < ~/.tauri/morphgate-updater.key
-   gh secret set TAURI_SIGNING_PRIVATE_KEY_PASSWORD < ~/.tauri/morphgate-updater.key.password
-   base64 -w0 ~/.android/morphgate-release.jks | gh secret set ANDROID_KEYSTORE_BASE64
-   gh secret set ANDROID_KEYSTORE_PASSWORD < ~/.android/morphgate-release.password
-   gh secret set ANDROID_KEY_ALIAS --body morphgate
-   ```
+**The update signing key** (made with `npx tauri signer generate`): its public half is
+`plugins.updater.pubkey` in `apps/desktop/src-tauri/tauri.conf.json`, and installed apps accept
+only updates signed with it.
 
-   **The update signing key** (made with `npx tauri signer generate`): its public half is
-   `plugins.updater.pubkey` in `apps/desktop/src-tauri/tauri.conf.json`, and installed apps accept
-   only updates signed with it.
+**The Android release key** (`~/.android/morphgate-release.jks`, alias `morphgate`, RSA 4096,
+valid until 2056; certificate SHA-256
+`3E:19:14:48:14:F5:93:31:1B:1C:76:C1:5E:55:87:ED:E5:73:61:11:00:4B:AC:87:CB:78:92:BC:54:BC:4B:A8`):
+Android installs an update only when it is signed with the same key as the installed app, and
+Google Play ties the app to it. Play App Signing uses this key (exported with Google's PEPK tool
+and uploaded before the first Play release), and it is also the upload key: Play installs and the
+GitHub APKs carry the same signature, so either updates the other.
 
-   **The Android release key** (`~/.android/morphgate-release.jks`, alias `morphgate`, RSA 4096,
-   valid until 2056; certificate SHA-256
-   `3E:19:14:48:14:F5:93:31:1B:1C:76:C1:5E:55:87:ED:E5:73:61:11:00:4B:AC:87:CB:78:92:BC:54:BC:4B:A8`):
-   Android installs an update only when it is signed with the same key as the installed app, and
-   Google Play ties the app to it. Play App Signing uses this key (exported with Google's PEPK
-   tool and uploaded before the first Play release), and it is also the
-   upload key: Play installs and the GitHub APKs carry the same signature, so either updates the
-   other.
-
-   For both keys:
-   - **Back them up**, with their passwords (password manager or offline). Lost, existing
-     installs can't update any more: users must uninstall and install again.
-   - **Keep them secret.** Anyone with a key who can also publish releases can ship code to every
-     user.
+For both keys:
+- **Back them up**, with their passwords (password manager or offline). Lost, existing installs
+  can't update any more: users must uninstall and install again.
+- **Keep them secret.** Anyone with a key who can also publish releases can ship code to every
+  user.
 
 ## Cutting a release
 
@@ -135,9 +118,7 @@ Updates are signed regardless (see above).
   copy with the stapled one. "Check the macOS signature" shows the signing authority, the
   stapled tickets and Gatekeeper's verdict on both, and fails the build where they're wrong.
   A dev build with *platforms* `macos` is the cheapest check of a change to any of this. The
-  app's `Info.plist` gets
-  `src-tauri/Info.plist` merged in: macOS 15 asks before an app reaches devices on the local
-  network, and shows its `NSLocalNetworkUsageDescription`. The certificate was made from a
+  certificate was made from a
   CSR on Linux (`openssl req -newkey rsa:2048`); make a new one before it expires
   (Certificates → + → Developer ID Application, G2 Sub-CA; the Account Holder
   only), and the `.p12` with `openssl pkcs12 -export -legacy` (macOS's `security import` wants
@@ -174,7 +155,7 @@ job (macOS runner) builds and signs the .ipa; the **TestFlight** job (Linux) upl
 `scripts/upload-ios.py`, through the App Store Connect API, and waits until Apple has processed
 it. The version is the one in `Cargo.toml` (a dev build's too, without its `-<build>`: App Store
 versions are at most three numbers), and the build number is the release workflow's: its run
-number plus `RUN_NUMBER_OFFSET` (see One-time setup). A build uploaded by hand needs a number above
+number plus `RUN_NUMBER_OFFSET` (above). A build uploaded by hand needs a number above
 the last one.
 
 It needs the secrets `IOS_CERTIFICATE` (an Apple Distribution certificate with its key, a .p12 in
@@ -222,9 +203,9 @@ npx tauri android build --aab --target aarch64 --target armv7 --target x86_64 \
 
 It lands in `src-tauri/gen/android/app/build/outputs/bundle/universalRelease/`. Play takes each
 version code once. The code is `bundle.android.versionCode` in `src-tauri/tauri.android.conf.json`,
-which `scripts/bump-version.sh` sets to X·1000000 + Y·10000 + Z·100 for version X.Y.Z (0.1.1 is
-10100); to upload the same version again, raise it by one there. The APKs carry the same code, so a Play install and a GitHub APK of the same
-version can replace each other.
+which `scripts/bump-version.sh` sets to X·1000000 + Y·10000 + Z·100 for version X.Y.Z (0.2.0 is
+20000); to upload the same version again, raise it by one there. The APKs carry the same code,
+so a Play install and a GitHub APK of the same version can replace each other.
 
 Desktop:
 
