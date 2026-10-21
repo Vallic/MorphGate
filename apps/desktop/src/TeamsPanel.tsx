@@ -44,6 +44,10 @@ interface Props {
   onClose: () => void;
   /** Sign in at an organization's identity provider. */
   onSso: (orgId: string, orgName: string) => void;
+  /** Organizations whose vaults wait until the account has two-step verification. */
+  totpRequired: string[];
+  /** Turn on two-step verification. */
+  onTotp: () => void;
   /** From a link: an invite to look up, or the team to open. */
   invite?: string;
   openOrg?: string;
@@ -51,7 +55,7 @@ interface Props {
 
 const ACCESS_LEVELS: Access[] = ["read", "write", "manage"];
 
-export function TeamsPanel({ vaults, orgs, keys, onChanged, onClose, onSso, invite, openOrg }: Props) {
+export function TeamsPanel({ vaults, orgs, keys, onChanged, onClose, onSso, totpRequired, onTotp, invite, openOrg }: Props) {
   const personal = vaults.find((v) => v.personal)?.id;
   const personalKeys = keys.filter((k) => k.vaultId === personal);
   const [status, setStatus] = useState<SharingStatus | null>(null);
@@ -77,6 +81,8 @@ export function TeamsPanel({ vaults, orgs, keys, onChanged, onClose, onSso, invi
         onChanged={onChanged}
         onGone={() => void onChanged().then(() => setOpen(null))}
         onSso={() => onSso(org.id, org.name)}
+        totpRequired={totpRequired.includes(org.id)}
+        onTotp={onTotp}
       />
     );
   }
@@ -296,9 +302,12 @@ interface OrgProps {
   onGone: () => void;
   /** Sign in at the organization's identity provider. */
   onSso: () => void;
+  /** Its vaults wait until the account has two-step verification. */
+  totpRequired: boolean;
+  onTotp: () => void;
 }
 
-function OrgView({ org, vaults, personalKeys, fingerprint, me, onBack, onClose, onChanged, onGone, onSso }: OrgProps) {
+function OrgView({ org, vaults, personalKeys, fingerprint, me, onBack, onClose, onChanged, onGone, onSso, totpRequired, onTotp }: OrgProps) {
   const [members, setMembers] = useState<MemberView[] | null>(null);
   const [memberKeys, setMemberKeys] = useState<MemberKeyView[]>([]);
   const shared = vaults.filter((v) => !v.directory);
@@ -414,6 +423,16 @@ function OrgView({ org, vaults, personalKeys, fingerprint, me, onBack, onClose, 
         </div>
       )}
       {error && <p className="error">{error}</p>}
+      {confirmed && totpRequired && (
+        <div className="notice-box warn stack">
+          <p>{org.name} requires two-step verification: its vaults open on your devices once your account has it.</p>
+          <div className="row">
+            <button type="button" className="primary" onClick={onTotp}>
+              Turn on two-step verification
+            </button>
+          </div>
+        </div>
+      )}
       {locked && (
         <p className="notice-box warn team-locked">
           {org.name} is locked until it has a plan: no new vaults, edits, invites, policies or published keys.
@@ -445,7 +464,14 @@ function OrgView({ org, vaults, personalKeys, fingerprint, me, onBack, onClose, 
 
       {confirmed && (
         <fieldset className="plain" disabled={locked}>
-          <MyKeys org={org} keys={personalKeys} published={memberKeys.filter((k) => k.mine)} ready={hasDirectory} onChanged={loadKeys} />
+          <MyKeys
+            org={org}
+            keys={personalKeys}
+            published={memberKeys.filter((k) => k.mine)}
+            ready={hasDirectory}
+            waiting={totpRequired}
+            onChanged={loadKeys}
+          />
         </fieldset>
       )}
       {confirmed && details && (
@@ -1411,12 +1437,15 @@ function MyKeys({
   keys,
   published,
   ready,
+  waiting,
   onChanged,
 }: {
   org: OrgInfo;
   keys: KeyView[];
   published: MemberKeyView[];
   ready: boolean;
+  /** The directory waits like the organization's vaults (two-step verification, said above). */
+  waiting: boolean;
   onChanged: () => void;
 }) {
   const [pick, setPick] = useState("");
@@ -1438,7 +1467,7 @@ function MyKeys({
         Publish the public keys you use on {org.name}'s servers. If you leave, admins can then find and remove your access
         from those servers. Only the public half is shared.
       </p>
-      {!ready && <p className="hint">The organization's member key directory arrives with the next sync.</p>}
+      {!ready && !waiting && <p className="hint">The organization's member key directory arrives with the next sync.</p>}
       {published.length > 0 && (
         <ul className="device-list">
           {published.map((k) => (

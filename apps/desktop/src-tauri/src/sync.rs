@@ -121,6 +121,8 @@ pub struct SyncStatusView {
     syncing: bool,
     /// Sync is on but the server ended this device's session: sign in again.
     signed_out: bool,
+    /// Organizations whose vaults wait for this account to turn on two-step verification.
+    totp_required: Vec<SsoNeed>,
     /// Organizations whose vaults wait for this device to sign in at their identity provider.
     sso_required: Vec<SsoNeed>,
     /// Organizations whose vaults wait for this device to be approved (or that denied it).
@@ -323,6 +325,14 @@ fn status(vault: &VaultState, sync: &SyncState, syncing: bool) -> SyncStatusView
             .map_or_else(|| "Your organization".into(), |o| o.name.clone())
     };
     let held = sync.held.lock().map(|h| h.clone()).unwrap_or_default();
+    let totp_required = held
+        .iter()
+        .filter(|(_, why)| *why == Hold::Totp)
+        .map(|(id, _)| SsoNeed {
+            org_id: id.clone(),
+            org_name: name(id),
+        })
+        .collect();
     let sso_required = held
         .iter()
         .filter(|(_, why)| *why == Hold::Sso)
@@ -333,7 +343,7 @@ fn status(vault: &VaultState, sync: &SyncState, syncing: bool) -> SyncStatusView
         .collect();
     let approval_required = held
         .iter()
-        .filter(|(_, why)| *why != Hold::Sso)
+        .filter(|(_, why)| matches!(why, Hold::Approval | Hold::Denied))
         .map(|(id, why)| ApprovalNeed {
             org_id: id.clone(),
             org_name: name(id),
@@ -383,6 +393,7 @@ fn status(vault: &VaultState, sync: &SyncState, syncing: bool) -> SyncStatusView
         last_sync_at: info.as_ref().and_then(|i| i.last_sync_at),
         last_error: info.and_then(|i| i.last_error),
         syncing,
+        totp_required,
         sso_required,
         approval_required,
         approvals_waiting,
@@ -1271,7 +1282,10 @@ pub async fn sync_totp_enable(
     let client = signed_in(&state, &vault).await?;
     account::enable_totp(&vault.0, client, code)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    // Teams that require it open their vaults: the next round brings them.
+    state.poke.notify_one();
+    Ok(())
 }
 
 /// Turns two-step verification off (master password and a current code).
@@ -1286,7 +1300,10 @@ pub async fn sync_totp_disable(
     let client = signed_in(&state, &vault).await?;
     account::disable_totp(&vault.0, client, Zeroizing::new(password), code)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    // Teams that require it hold their vaults back from now on: the next round says so.
+    state.poke.notify_one();
+    Ok(())
 }
 
 /// Mails a code to the address the account should move to.

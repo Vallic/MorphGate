@@ -49,7 +49,8 @@ impl<'de> Deserialize<'de> for B64 {
 pub struct ApiError {
     pub code: String,
     pub message: String,
-    /// With `403 sso_required` and `403 device_approval_required`: the organization.
+    /// With `403 totp_setup_required`, `403 sso_required` and `403 device_approval_required`:
+    /// the organization.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub org_id: Option<String>,
     /// With `403 device_approval_required`: the calling device.

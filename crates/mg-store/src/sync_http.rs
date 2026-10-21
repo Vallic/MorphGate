@@ -14,6 +14,9 @@ const PAGE: u32 = 500;
 /// The organization and why, when the server held its vaults back.
 pub(crate) fn held(e: &mg_sync::Error) -> Option<(String, Hold)> {
     match e {
+        mg_sync::Error::TotpSetupRequired { org_id } if !org_id.is_empty() => {
+            Some((org_id.clone(), Hold::Totp))
+        }
         mg_sync::Error::SsoRequired { org_id } => Some((org_id.clone(), Hold::Sso)),
         mg_sync::Error::DeviceApprovalRequired { org_id, denied } => Some((
             org_id.clone(),

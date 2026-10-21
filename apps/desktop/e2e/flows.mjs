@@ -7,6 +7,7 @@
 // mails sign-up codes (Mailpit's web address), for servers that verify addresses.
 
 import assert from "node:assert/strict";
+import { createHmac } from "node:crypto";
 
 export const PASSWORD = "correct horse battery staple";
 
@@ -495,15 +496,62 @@ export async function rotateDueKeys(s, org) {
   }
 }
 
-/** J7 (an owner or admin, in the organization's page): requires approval of new devices. */
-export async function requireDeviceApproval(s) {
+/** An owner or admin, in the organization's page: turns on the policy whose label has `text`. */
+async function turnOnPolicy(s, text) {
   await s.wait(
-    () => s.exec(`return [...document.querySelectorAll(".page-aside label.check")].some((l) => l.innerText.includes("approve new devices")) || null`),
+    () => s.exec(`return [...document.querySelectorAll(".page-aside label.check")].some((l) => l.innerText.includes(arguments[0])) || null`, text),
     "the policies",
   );
-  await s.exec(`[...document.querySelectorAll(".page-aside label.check")].find((l) => l.innerText.includes("approve new devices")).querySelector("input").click(); return true`);
+  await s.exec(`[...document.querySelectorAll(".page-aside label.check")].find((l) => l.innerText.includes(arguments[0])).querySelector("input").click(); return true`, text);
   await s.clickButton("Save policies");
   await s.wait(() => s.exec(`return [...document.querySelectorAll(".page-aside button")].some((b) => b.innerText.includes("Save policies")) ? null : true`), "the policies to save");
+}
+
+/** J7 (an owner or admin, in the organization's page): requires approval of new devices. */
+export const requireDeviceApproval = (s) => turnOnPolicy(s, "approve new devices");
+
+/** T14 (an owner or admin, in the organization's page): requires two-step verification. */
+export const requireTwoStep = (s) => turnOnPolicy(s, "Require two-step verification");
+
+/** The sidebar's "Turn on two-step verification" (a team requires it), with its tooltip, or null. */
+export const twoStepDue = (s) => s.exec(`const b = document.querySelector("button.sidebar-foot.totp"); return b ? b.title : null`);
+
+/** The current code of an authenticator app holding `secret` (RFC 6238: SHA-1, 6 digits, 30 s). */
+export function totpCode(secret, at = Date.now()) {
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+  const bits = [...secret.replace(/[\s=]/g, "").toUpperCase()].map((c) => alphabet.indexOf(c).toString(2).padStart(5, "0")).join("");
+  const key = Buffer.from(bits.match(/.{8}/g).map((b) => parseInt(b, 2)));
+  const counter = Buffer.alloc(8);
+  counter.writeBigUInt64BE(BigInt(Math.floor(at / 30000)));
+  const mac = createHmac("sha1", key).update(counter).digest();
+  const at4 = mac[mac.length - 1] & 15;
+  return String((mac.readUInt32BE(at4) & 0x7fffffff) % 1e6).padStart(6, "0");
+}
+
+/** T14: turns on two-step verification with a made-up authenticator, from the sidebar's notice
+ *  when a team asks for it, else from Sync; returns its secret. */
+export async function turnOnTwoStep(s, password = PASSWORD) {
+  const press = (text) =>
+    s.exec(`const b = [...document.querySelectorAll(".panel button")].find((b) => b.innerText === arguments[0] && !b.disabled);
+      if (!b) throw new Error("no enabled button " + arguments[0]); b.click(); return true`, text);
+  if (await twoStepDue(s)) await s.click("button.sidebar-foot.totp");
+  else {
+    await s.click("button.sidebar-foot.sync");
+    await s.wait(() => s.exec(`return [...document.querySelectorAll(".panel button")].some((b) => b.innerText === "Turn on two-step verification") || null`), "the account");
+    await press("Turn on two-step verification");
+  }
+  await s.waitText("Confirm with your master password", ".panel");
+  await s.typeLabelled("Master password", password);
+  await press("Continue");
+  const secret = await s.wait(
+    () => s.exec(`const k = [...document.querySelectorAll(".panel .hint")].find((p) => p.innerText.includes("Enter this key instead")); return k ? k.querySelector(".mono").innerText : null`),
+    "the authenticator key",
+    30000,
+  );
+  await s.typeLabelled("Authenticator code", totpCode(secret));
+  await press("Turn on");
+  await s.waitText("Turn off two-step verification", ".panel", 30000);
+  return secret.replace(/\s/g, "");
 }
 
 /** The device-approval state on this device's sidebar ("Waiting for approval", "Denied"), or null. */

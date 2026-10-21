@@ -8,7 +8,9 @@ import {
   openLink,
   ownsTeam,
   sync,
+  totpTitle,
   type OrgInfo,
+  type SsoNeed,
   type SyncAccount,
   type SyncDevice,
   type SyncPlan,
@@ -30,9 +32,11 @@ interface Props {
   onChanged: () => void;
   onClose: () => void;
   onOpenTeams: () => void;
+  /** Opened to turn on two-step verification (teams wait for it). */
+  startTotp?: boolean;
 }
 
-export function SyncPanel({ status, orgs, onChanged, onClose, onOpenTeams }: Props) {
+export function SyncPanel({ status, orgs, onChanged, onClose, onOpenTeams, startTotp }: Props) {
   // The address of the account just deleted from here.
   const [deleted, setDeleted] = useState("");
   // The account this device just joined: what that did to its master password is said once more.
@@ -50,6 +54,8 @@ export function SyncPanel({ status, orgs, onChanged, onClose, onOpenTeams }: Pro
           !status.signedOut && (
             <Account
               round={status.lastSyncAt}
+              totpRequired={status.totpRequired}
+              startTotp={startTotp}
               owned={orgs.filter((o) => o.role === "owner")}
               onChanged={onChanged}
               onDeleted={onDeleted}
@@ -610,12 +616,17 @@ function planText(p: SyncPlan): string {
  * again after each sync round (`round`): a plan bought or ended meanwhile shows. */
 function Account({
   round,
+  totpRequired,
+  startTotp,
   owned,
   onChanged,
   onDeleted,
   onOpenTeams,
 }: {
   round: number | null;
+  /** Teams whose vaults wait until the account has two-step verification. */
+  totpRequired: SsoNeed[];
+  startTotp?: boolean;
   owned: OrgInfo[];
   onChanged: () => void;
   onDeleted: (email: string) => void;
@@ -624,7 +635,7 @@ function Account({
   const [account, setAccount] = useState<SyncAccount | null>(null);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState("");
-  const [mode, setMode] = useState<"" | "totp-on" | "totp-off" | "email" | "delete">("");
+  const [mode, setMode] = useState<"" | "totp-on" | "totp-off" | "email" | "delete">(startTotp ? "totp-on" : "");
   const exportData = () => {
     setError("");
     setSaved("");
@@ -644,6 +655,8 @@ function Account({
   const cancel = () => setMode("");
 
   if (!account) return error ? <p className="error">{error}</p> : null;
+  // Asked to turn it on, but it's on already (from another device, say).
+  const shown = mode === "totp-on" && account.totpEnabled ? "" : mode;
   const facts = account.plan || account.emailVerified === false || account.totp;
   return (
     <div className="stack">
@@ -671,19 +684,20 @@ function Account({
         </dl>
       )}
       {error && <p className="error">{error}</p>}
-      {account.termsToAccept && mode === "" && <TermsUpdate terms={account.termsToAccept} onDone={done} />}
+      {account.termsToAccept && shown === "" && <TermsUpdate terms={account.termsToAccept} onDone={done} />}
       {saved && (
         <p className="ok">
           Saved {saved}: what the server keeps about your account. Your hosts and keys aren't in it; the server can't read them.
         </p>
       )}
-      {mode === "totp-on" && <TotpOn onDone={done} onCancel={cancel} />}
-      {mode === "totp-off" && <TotpOff onDone={done} onCancel={cancel} />}
-      {mode === "email" && <EmailChange onDone={done} onCancel={cancel} />}
-      {mode === "delete" && (
+      {totpRequired.length > 0 && !account.totpEnabled && <p className="notice-box warn">{totpTitle(totpRequired)}.</p>}
+      {shown === "totp-on" && <TotpOn onDone={done} onCancel={cancel} />}
+      {shown === "totp-off" && <TotpOff onDone={done} onCancel={cancel} />}
+      {shown === "email" && <EmailChange onDone={done} onCancel={cancel} />}
+      {shown === "delete" && (
         <DeleteAccount email={account.email} owned={owned} onDone={() => onDeleted(account.email)} onCancel={cancel} onOpenTeams={onOpenTeams} />
       )}
-      {mode === "" && (
+      {shown === "" && (
         <div className="row wrap">
           {account.totp && (
             <button type="button" className="secondary" onClick={() => setMode(account.totpEnabled ? "totp-off" : "totp-on")}>
@@ -708,7 +722,7 @@ function Account({
           </button>
         </div>
       )}
-      {mode === "" && account.totp && !account.totpEnabled && (
+      {shown === "" && account.totp && !account.totpEnabled && (
         <p className="hint">With two-step verification, signing in on a new device also needs a code from an authenticator app.</p>
       )}
     </div>

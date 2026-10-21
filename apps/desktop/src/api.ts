@@ -525,6 +525,8 @@ export interface SyncStatus {
   syncing: boolean;
   /** Sync is on but the server ended this device's session: sign in again. */
   signedOut: boolean;
+  /** Organizations whose vaults wait for this account to turn on two-step verification. */
+  totpRequired: SsoNeed[];
   /** Organizations whose vaults wait for this device to sign in at their identity provider. */
   ssoRequired: SsoNeed[];
   /** Organizations whose vaults wait for this device to be approved, or that denied it. */
@@ -565,6 +567,13 @@ export interface DeviceRequest {
 export interface SsoNeed {
   orgId: string;
   orgName: string;
+}
+
+/** Which teams wait for two-step verification, and what for. */
+export function totpTitle(orgs: SsoNeed[]): string {
+  const names = orgs.map((o) => o.orgName);
+  const list = names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}` : names[0];
+  return `${list} ${names.length > 1 ? "require" : "requires"} two-step verification: ${names.length > 1 ? "their" : "its"} vaults open here once your account has it`;
 }
 
 /** An organization's identity provider and this device's session with it. */

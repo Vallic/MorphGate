@@ -31,6 +31,10 @@ pub enum Error {
     /// `402`: the account's or organization's plan doesn't cover this.
     #[error("{}", payment_message(.0))]
     PaymentRequired(Box<Payment>),
+    /// `403 totp_setup_required`: the organization's vaults need two-step verification on the
+    /// account (`org_id` empty from servers that don't say which organization).
+    #[error("the organization requires two-step verification; turn it on first")]
+    TotpSetupRequired { org_id: String },
     /// `403 sso_required`: the organization's vaults need this device signed in at its
     /// identity provider (`sso_start`).
     #[error("the organization's vaults need single sign-on")]
@@ -932,6 +936,11 @@ async fn error(resp: reqwest::Response) -> Error {
                 .and_then(|v| v.as_u64())
                 .and_then(|n| u32::try_from(n).ok()),
         })),
+        StatusCode::FORBIDDEN if field("code").as_deref() == Some("totp_setup_required") => {
+            Error::TotpSetupRequired {
+                org_id: field("org_id").unwrap_or_default(),
+            }
+        }
         StatusCode::FORBIDDEN if field("code").as_deref() == Some("sso_required") => {
             Error::SsoRequired {
                 org_id: field("org_id").unwrap_or_default(),

@@ -1772,6 +1772,12 @@ dialog.modal .actions {
   color: var(--ink);
 }
 
+.sidebar-foot .grow {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* First run: sync offered in a dialog, the same form as the Sync page. */
 dialog.sheet {
   width: min(520px, calc(100% - 32px));

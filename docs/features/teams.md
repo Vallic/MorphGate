@@ -158,7 +158,7 @@ Owners and admins edit **Policies**; **Save policies** appears once something ch
 
 | Policy | Control | Notes |
 | --- | --- | --- |
-| `require_totp` | **Require two-step verification to open the organization's vaults** | Disabled without `features.totp` unless on ("(this server doesn't offer two-step verification)") |
+| `require_totp` | **Require two-step verification to open the organization's vaults** | Disabled without `features.totp` unless on ("(this server doesn't offer two-step verification)"). Members without it are told where they look for the vaults ([Two-step verification required](account-and-devices.md#two-step-verification-required)) |
 | `members_can_create_vaults` | **Members can create vaults (they manage the ones they create)** | |
 | `allowed_email_domains` | **Invite only addresses at these domains (empty: any)** | Split on commas and spaces, leading `@` dropped, lowercased; the invite form checks it too |
 | `require_device_approval` | **Owners and admins approve new devices before they open the organization's vaults (…)** | Disabled unless the plan lists `device_approval` (or the server has no plans) or it is on: "Needs the Business plan." |

@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from "react";
 import {
   ago,
+  totpTitle,
   type ForwardView,
   type GroupView,
   type HostView,
@@ -56,6 +57,8 @@ interface Props {
   onLock: () => void;
   update: UpdateInfo | null;
   onOpenAbout: () => void;
+  /** Turn on two-step verification: organizations' vaults wait for it. */
+  onTotp: () => void;
   /** Sign in at an organization's identity provider. */
   onSso: (need: SsoNeed) => void;
   /** An organization's vaults wait for this device's approval. */
@@ -104,6 +107,7 @@ export function Sidebar({
   onLock,
   update,
   onOpenAbout,
+  onTotp,
   onSso,
   onApproval,
 }: Props) {
@@ -282,6 +286,13 @@ export function Sidebar({
           <button className="sidebar-foot update" onClick={onOpenAbout}>
             <Icon name="update" size={15} />
             <span>Update to {update.version}</span>
+          </button>
+        )}
+        {!!syncStatus?.totpRequired.length && (
+          <button className="sidebar-foot due totp" onClick={onTotp} title={totpTitle(syncStatus.totpRequired)}>
+            <Icon name="teams" size={15} />
+            <span className="grow">Turn on two-step verification</span>
+            <i className="status-square connecting" aria-hidden="true" />
           </button>
         )}
         {syncStatus?.ssoRequired.map((n) => (

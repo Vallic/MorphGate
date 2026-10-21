@@ -154,7 +154,8 @@ type View =
   | { kind: "key"; id?: string }
   | { kind: "snippet"; id?: string }
   | { kind: "forward"; id?: string }
-  | { kind: "sync" }
+  /** `totp`: straight to turning on two-step verification (teams wait for it). */
+  | { kind: "sync"; totp?: boolean }
   | { kind: "security" }
   | { kind: "about" }
   | { kind: "teams" }
@@ -834,12 +835,16 @@ function Workspace({ onLock, termSettings, onSettingsChanged: loadTermSettings, 
           onChanged={refresh}
           onClose={close}
           onSso={(orgId, orgName) => setSsoFor({ orgId, orgName })}
+          totpRequired={syncStatus?.totpRequired.map((o) => o.orgId) ?? []}
+          onTotp={() => open({ kind: "sync", totp: true })}
           invite={linked?.invite}
           openOrg={linked?.org}
         />
       )}
       {view.kind === "sync" && syncStatus && (
         <SyncPanel
+          key={view.totp ? "totp" : "sync"}
+          startTotp={view.totp}
           status={syncStatus}
           orgs={orgList}
           onChanged={() => void syncApi.status().then(setSyncStatus).then(refresh)}
@@ -1069,6 +1074,7 @@ function Workspace({ onLock, termSettings, onSettingsChanged: loadTermSettings, 
             open(p === "quick" ? { kind: "connect" } : p === "forwards" ? { kind: "forward" } : p === "logs" ? { kind: "logs" } : { kind: p })
           }
           onLock={onLock}
+          onTotp={() => open({ kind: "sync", totp: true })}
           onSso={setSsoFor}
           onApproval={setApprovalFor}
           onSend={sendTo}
@@ -1107,6 +1113,7 @@ function Workspace({ onLock, termSettings, onSettingsChanged: loadTermSettings, 
           onOpenSync={() => open({ kind: "sync" })}
           vaults={vaults}
           onOpenTeams={() => open({ kind: "teams" })}
+          onTotp={() => open({ kind: "sync", totp: true })}
           onSso={setSsoFor}
           onApproval={setApprovalFor}
           onOpenAppearance={() => open({ kind: "appearance" })}

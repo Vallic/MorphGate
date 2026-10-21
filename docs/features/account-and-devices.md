@@ -148,7 +148,17 @@ The account's other devices hear `401 account_deleted` on their next refresh (a 
 
 ## When an organization holds this device
 
-An organization can keep its vaults from a device until something is settled. Its vaults that are already here stay, unsynced edits included, and sync once it is settled; the personal vault is never affected. The shared part of each round notes the hold (`Hold` in `crates/mg-store/src/sync.rs`) from a `403 sso_required` or `403 device_approval_required` on the organization's vaults, and, with device approval on, from this device's row in `GET /v1/orgs/{org}/devices`. `SyncStatusView` carries them as `ssoRequired` and `approvalRequired`. The team side (approving others, policies) is in [Teams](teams.md#device-approval-single-sign-on-and-activity).
+An organization can keep its vaults from a device until something is settled. Its vaults that are already here stay, unsynced edits included, and sync once it is settled; the personal vault is never affected. The shared part of each round notes the hold (`Hold` in `crates/mg-store/src/sync.rs`) from a `403 totp_setup_required`, `403 sso_required` or `403 device_approval_required` on the organization's vaults, and, with device approval on, from this device's row in `GET /v1/orgs/{org}/devices`. A server leaves such vaults out of `GET /v1/vaults` without saying why, so a member who never had them would see nothing: for an organization with `require_totp` none of whose vaults is listed, the round reads `GET /v1/account` and notes the hold when `totp_enabled` is off. `SyncStatusView` carries them as `totpRequired`, `ssoRequired` and `approvalRequired`. The team side (approving others, policies) is in [Teams](teams.md#device-approval-single-sign-on-and-activity).
+
+### Two-step verification required
+
+| Where | Shows |
+| --- | --- |
+| Sidebar foot | **Turn on two-step verification**; its tooltip names the teams: "{team} requires two-step verification: its vaults open here once your account has it" |
+| Phone, hosts screen | **Turn on two-step verification** with the same line |
+| Team page | "{team} requires two-step verification: its vaults open on your devices once your account has it." and **Turn on two-step verification** |
+
+Each opens Sync with the authenticator setup started (`{kind: "sync", totp: true}`), under the same line in a notice. `sync_totp_enable` and `sync_totp_disable` start a round when they're done, so the team's vaults come, or wait, at once.
 
 ### Waiting for approval
 
@@ -214,6 +224,7 @@ All of them hold the sync lock, and those that keep the session store a rotated 
 | `server/tests/account.rs` | `signing_out_another_device` (the other device gets `DeviceRevoked`, signs in again), `a_device_updates_what_it_says_about_itself` (and can't rename another, nor to blank), `deleting_an_account_tells_its_other_devices` (`AccountDeleted`, and `DeviceRevoked` for one signed out before), `the_data_export_tells_what_the_server_keeps` |
 | `server/tests/account.rs`, `protocol.rs` | `password_change_reaches_every_device`, `recovery_on_a_synced_device_and_on_a_fresh_one`, `a_new_recovery_key_replaces_the_old_one_without_signing_anyone_out`, `password_rotation_signs_out_others_but_a_new_recovery_key_does_not`, `recovery_tokens_are_narrow_and_single_use` |
 | `server/tests/device_approval.rs` | `a_new_device_waits_for_approval` |
+| `server/tests/totp_policy.rs` | `a_team_that_requires_two_step_verification_says_so`: a proxy in front of the reference server plays the hosted service's check; a new member without it is told, gets the vault once it's on, and keeps it (told again) when it's off |
 | `crates/mg-store/src/sync.rs`, `vault.rs` | `token_and_config_roundtrip_and_disable` (what **Keep a copy here** leaves), `erase_leaves_a_first_run_device` |
 | `apps/desktop/e2e/teams.mjs` | Bob signs his second device out from his first: it erases itself, the first screen says why, and signing in brings his vault back; a new device waits for approval, is denied, then approved from Bob's first device; Alice signs in to her team's identity provider from **Sign in to {team}**; **Download your data**; **Delete account…** sends an owner to Teams, deletes Bob's account, and his second device says the account was deleted |
 

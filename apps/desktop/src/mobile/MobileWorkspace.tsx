@@ -4,6 +4,7 @@ import {
   describeForward,
   hosts as hostsApi,
   keyType,
+  totpTitle,
   vpnKindName,
   type ConnectTarget,
   type ForwardView,
@@ -79,6 +80,8 @@ interface Props {
   onToggleForward: (f: ForwardView) => void;
   onOpenMore: (panel: MorePanel) => void;
   onLock: () => void;
+  /** Turn on two-step verification: organizations' vaults wait for it. */
+  onTotp: () => void;
   /** Sign in at an organization's identity provider. */
   onSso: (need: SsoNeed) => void;
   /** An organization's vaults wait for this device's approval. */
@@ -225,6 +228,17 @@ function Home(p: Props & { section: Section; onSection: (s: Section) => void; on
       <div className="m-scroll">
         {p.section === "hosts" && (
           <>
+            {!!p.syncStatus?.totpRequired.length && (
+              <button type="button" className="m-sso" onClick={p.onTotp}>
+                <span className="m-row-text">
+                  <span className="m-row-title">Turn on two-step verification</span>
+                  <span className="m-row-sub">{totpTitle(p.syncStatus.totpRequired)}.</span>
+                </span>
+                <span className="m-chevron">
+                  <Svg d={CHEVRON} size={18} />
+                </span>
+              </button>
+            )}
             {p.syncStatus?.ssoRequired.map((n) => (
               <button key={n.orgId} type="button" className="m-sso" onClick={() => p.onSso(n)}>
                 <span className="m-row-text">

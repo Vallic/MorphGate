@@ -1417,7 +1417,8 @@ components:
         org_id:
           type: string
           description: >-
-            With 403 sso_required, the organization whose identity provider the device must sign
+            With 403 totp_setup_required, the organization that requires two-step verification;
+            with 403 sso_required, the organization whose identity provider the device must sign
             in at; with 403 device_approval_required, the organization that has to approve it.
         device_id:
           type: string
@@ -1842,9 +1843,10 @@ components:
         require_totp:
           type: boolean
           description: >-
-            Members without two-step verification get 403 totp_setup_required on the
-            organization's vaults (pull and push) until they turn it on. Their personal vault is
-            unaffected. Servers without TOTP refuse to set it (501 not_supported).
+            Members without two-step verification get 403 totp_setup_required (with org_id) on
+            the organization's vaults (pull and push), and GET /vaults leaves them out, until they
+            turn it on. Their personal vault is unaffected. Servers without TOTP refuse to set it
+            (501 not_supported).
         members_can_create_vaults:
           type: boolean
           description: Members (not only owners and admins) may create vaults, which they then manage.
