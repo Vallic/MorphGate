@@ -209,7 +209,7 @@ function HostRows({ list, things, ...p }: HostRowsProps) {
                 </>
               }
               sub={`${h.user}@${h.hostname}:${h.port}`}
-              subMono
+              subTone="mono"
             />
             <Cell>
               <HostRoute h={h} t={things} />
@@ -1131,16 +1131,8 @@ export function VpnsPage(p: VpnsProps) {
                   lead={<Icon name="vpn" size={15} />}
                   name={v.label}
                   beside={<VaultTag vaults={p.vaults} id={v.vaultId} />}
-                  sub={
-                    v.problem ? (
-                      <span className="error-text">{v.problem}</span>
-                    ) : (
-                      <>
-                        {vpnKindName(v.kind)}
-                        {v.active && v.address && <span className="mono"> · {v.address}</span>}
-                      </>
-                    )
-                  }
+                  sub={v.problem ?? `${vpnKindName(v.kind)}${v.active && v.address ? ` · ${v.address}` : ""}`}
+                  subTone={v.problem ? "error" : undefined}
                 />
                 <Cell className="mono trunc">{v.server}</Cell>
                 <Cell className="trunc">{use(v)}</Cell>

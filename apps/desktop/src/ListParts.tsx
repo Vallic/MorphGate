@@ -52,7 +52,7 @@ export function NameCell({
   name,
   beside,
   sub,
-  subMono,
+  subTone,
 }: {
   pick?: Pick;
   onOpen?: () => void;
@@ -62,9 +62,10 @@ export function NameCell({
   lead?: ReactNode;
   name: string;
   beside?: ReactNode;
-  sub?: ReactNode;
-  /** The line under it is machine text (an address). */
-  subMono?: boolean;
+  /** The line under it: text only, so it shrinks to an ellipsis (the whole of it on hover). */
+  sub?: string;
+  /** That line is machine text (an address), or a problem. */
+  subTone?: "mono" | "error";
 }) {
   const inner = (
     <>
@@ -74,7 +75,11 @@ export function NameCell({
           <span className="lname">{name}</span>
           {beside}
         </span>
-        {sub && <span className={`lsub ${subMono ? "mono" : ""}`}>{sub}</span>}
+        {sub && (
+          <span className={`lsub ${subTone === "mono" ? "mono" : subTone === "error" ? "error-text" : ""}`} title={sub}>
+            {sub}
+          </span>
+        )}
       </span>
     </>
   );

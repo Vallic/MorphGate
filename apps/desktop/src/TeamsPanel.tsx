@@ -794,7 +794,7 @@ function MembersTab({ org, members, invites, published, keysRequired, admin, own
                   </>
                 }
               >
-                <NameCell name={m.email} beside={m.me && <span className="kind-badge me">you</span>} sub={m.fingerprint} subMono />
+                <NameCell name={m.email} beside={m.me && <span className="kind-badge me">you</span>} sub={m.fingerprint} subTone="mono" />
                 <Cell>
                   {owner && !m.me && m.status === "confirmed" && m.role !== "owner" ? (
                     <select
