@@ -64,6 +64,25 @@ export async function session(application, base = BASE) {
         text,
       ),
 
+    /** "Add from…" on a list page, then one of its items ("Import…", "Clouds…"). */
+    addFrom: async (item) => {
+      await s.clickButton("Add from…");
+      await s.wait(() => s.exec(`return document.querySelector(".add-from .menu") ? true : null`), "the Add from menu");
+      await s.exec(
+        `const b = [...document.querySelectorAll(".add-from .menu button")].find((b) => b.innerText.startsWith(arguments[0]));
+         if (!b) throw new Error("no menu item " + arguments[0]); b.click(); return true`,
+        item,
+      );
+    },
+
+    /** One of a page's tabs ("Identities", "Host CAs"). */
+    pageTab: (label) =>
+      s.exec(
+        `const b = [...document.querySelectorAll(".page-tabs button")].find((b) => b.innerText.startsWith(arguments[0]));
+         if (!b) throw new Error("no tab " + arguments[0]); b.click(); return true`,
+        label,
+      ),
+
     /** Sets an input's value the way React notices. */
     type: (css, text) =>
       s.exec(

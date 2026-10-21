@@ -74,7 +74,7 @@ Field and certificate prompts time out after 5 minutes (`PROMPT_TIMEOUT`), which
 
 ## The VPN editor
 
-`VpnPanel` edits one profile; the VPNs page (`VpnsPage` in `Lists.tsx`, **New VPN**) lists them with their server and status, or what uses them ("Used by 2 hosts and 1 group", "Not used by a host yet").
+`VpnPanel` edits one profile; the VPNs page (`VpnsPage` in `Lists.tsx`, **New VPN**) lists them as a table: name and kind, server, what uses them ("2 hosts, 1 group", "No host yet") and their state ("Up", "Down", or "Problem" with the problem under the name).
 
 | Control | Does |
 | --- | --- |

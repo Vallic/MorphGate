@@ -3,6 +3,32 @@
 Each `## X.Y.Z` section becomes the notes of that release, on GitHub and in the app's update
 prompt. Write them for users.
 
+## 0.2.1
+
+- The first screen offers New vault, New account and Sign in. New account creates your vault and
+  your sync account in one go.
+- An invite to a team opened before you've set MorphGate up shows on its first screen, with your
+  address filled in, and once your account exists Teams opens with the invite. You can also paste
+  an invite there (Joining a team?). An invite opened while sync is off opens as soon as you turn
+  sync on: no need to open the link again.
+- MorphGate can suggest a strong master password: five random words, wherever you set one.
+- With saved hosts, MorphGate opens on your Hosts page, which has a quick connect bar: type
+  user@host:port and choose how to sign in.
+- Hosts, groups, keys, snippets, tunnels and VPNs are tables you can search and filter, each row's
+  actions shown as you point at it. Hosts show whether they're connected instead of a letter, each
+  group says what it gives its hosts, and the sidebar lists your open sessions first. Keys,
+  identities and host CAs are tabs of the Keys page.
+- A team's page starts with what needs you (a member to confirm, a device to approve, a key to
+  rotate), then has tabs for its members, vaults, your SSH keys, settings and activity. You can
+  invite several people at once, and Teams says per team what's waiting for you.
+- When a team requires two-step verification and your account doesn't have it, MorphGate says so
+  and takes you to turning it on, instead of the team's vaults silently not appearing.
+- Sync: every change now carries a version inside its signed envelope, and deletions are signed,
+  so a sync server can't give a device an older copy of an item than one it has seen. Older
+  versions of the app keep syncing alongside this one.
+- Install and restart waits for an update check that's still running, so it installs the update
+  that check found.
+
 ## 0.2.0
 
 First release.

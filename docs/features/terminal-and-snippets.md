@@ -122,7 +122,7 @@ A `snippet` item: `name` (trimmed), `body` (exactly as typed), `tags` (trimmed, 
 | **Delete**, then **Really delete?** | Deletes |
 | **Close**, **Save snippet** / **Save changes** | |
 
-The Snippets page (sidebar **Snippets**) has **Edit** per row, and **Paste** and **Run** while a terminal is connected, **Select** for bulk delete and move, **Import…** and **New snippet**. On a phone, the terminal's **More** menu has **Snippets**.
+The Snippets page (sidebar **Snippets**) lists them as a table (name, the command's first line, tags), with **Edit** per row (or the name), and **Paste** and **Run** while a terminal is connected, a search and tag filters, **Select** for bulk delete and move, **Import…** and **New snippet**. On a phone, the terminal's **More** menu has **Snippets**.
 
 | Behavior | Detail |
 | --- | --- |

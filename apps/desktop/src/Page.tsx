@@ -34,8 +34,11 @@ export function Page({ title, badge, lead, back, actions, onClose, aside, childr
               <div className="page-actions">
                 {actions}
                 {onClose && (
-                  <button type="button" className="secondary page-close" onClick={onClose}>
-                    Close
+                  <button type="button" className="icon page-close" onClick={onClose} title="Close">
+                    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                      <path d="M6 6l12 12M18 6L6 18" />
+                    </svg>
+                    <span className="visually-hidden">Close</span>
                   </button>
                 )}
               </div>

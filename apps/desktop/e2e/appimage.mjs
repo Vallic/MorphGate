@@ -138,7 +138,7 @@ try {
   );
   await s.exec(`[...document.querySelectorAll(".sidebar-nav button")].find((b) => b.innerText.startsWith("Hosts")).click(); return true`);
   await s.wait(() => s.exec(`return document.querySelector(".panel.page h1")?.innerText === "Hosts" || null`), "the Hosts page");
-  await s.clickButton("Import…");
+  await s.addFrom("Import…");
   await s.wait(() => s.exec(`return document.querySelectorAll(".import-list li").length === 2 || null`), "the two hosts in ~/.ssh/config");
   const listed = await s.exec(`return document.querySelector(".import-hosts").innerText`);
   assert.match(listed, /Match blocks are skipped/);
@@ -191,7 +191,7 @@ try {
   writeFileSync(`${home}/.putty/sessions/router`, "HostName=10.0.0.1\nProtocol=telnet\n");
   await s.exec(`[...document.querySelectorAll(".sidebar-nav button")].find((b) => b.innerText.startsWith("Hosts")).click(); return true`);
   await s.wait(() => s.exec(`return document.querySelector(".panel.page h1")?.innerText === "Hosts" || null`), "the Hosts page");
-  await s.clickButton("Import…");
+  await s.addFrom("Import…");
   await s.clickButton("PuTTY");
   await s.wait(() => s.exec(`return document.querySelector(".import-list")?.innerText.includes("E2E PuTTY") || null`), "the PuTTY session");
   let page = await s.exec(`return document.querySelector(".import-hosts").innerText`);
@@ -375,6 +375,7 @@ try {
   // host key prompt, and the route bar says who vouched for it.
   await s.exec(`[...document.querySelectorAll(".sidebar-nav button")].find((b) => b.innerText.startsWith("Keys")).click(); return true`);
   await s.wait(() => s.exec(`return document.querySelector(".panel.page h1")?.innerText === "Keys" || null`), "the Keys page");
+  await s.pageTab("Host CAs");
   await s.clickButton("New host CA");
   await s.waitText("New host CA", ".panel");
   await s.typeLabelled("Name", "e2e host CA");
@@ -391,7 +392,7 @@ try {
       throw e;
     });
   assert.equal(saved, "ok", `saving the host CA: ${saved}`);
-  await s.wait(() => s.hasText(".panel strong", "e2e host CA"), "the host CA listed");
+  await s.wait(() => s.hasText(".panel .lname", "e2e host CA"), "the host CA listed");
   await s.exec(`[...document.querySelectorAll(".sidebar-nav button")].find((b) => b.innerText.startsWith("Hosts")).click(); return true`);
   await s.wait(() => s.exec(`return document.querySelector(".panel.page h1")?.innerText === "Hosts" || null`), "the Hosts page");
   await s.clickButton("New host");
@@ -451,7 +452,7 @@ try {
   // the key goes on the account; a refresh changes nothing; no Files for its hosts (no SFTP).
   await s.exec(`[...document.querySelectorAll(".sidebar-nav button")].find((b) => b.innerText.startsWith("Hosts")).click(); return true`);
   await s.wait(() => s.exec(`return document.querySelector(".panel.page h1")?.innerText === "Hosts" || null`), "the Hosts page");
-  await s.clickButton("Clouds…");
+  await s.addFrom("Clouds…");
   // The page shows what to add once it has listed the sources.
   await s.waitText("Connect Vallic Cloud", ".cloud-page", 30000);
   await s.clickButton("Connect Vallic Cloud");
@@ -480,10 +481,10 @@ try {
   await s.exec(`[...document.querySelectorAll(".sidebar-nav button")].find((b) => b.innerText.startsWith("Hosts")).click(); return true`);
   await s.wait(() => s.exec(`return document.querySelector(".panel.page h1")?.innerText === "Hosts" || null`), "the Hosts page again");
   const vallicRow = await s.exec(
-    `const li = [...document.querySelectorAll(".panel.page li")].find((l) => l.innerText.includes("E2E Shop · Production"));
-     return li ? [...li.querySelectorAll("button")].map((b) => b.innerText).join("|") : null`,
+    `const row = [...document.querySelectorAll(".panel.page [role=row]")].find((r) => r.innerText.includes("E2E Shop · Production"));
+     return row ? [...row.querySelectorAll("button")].map((b) => b.getAttribute("aria-label") || b.innerText).join("|") : null`,
   );
-  assert.ok(vallicRow && !vallicRow.split("|").includes("Files"), `no Files for a Vallic host: ${vallicRow}`);
+  assert.ok(vallicRow && !vallicRow.split("|").includes("Browse files (SFTP)"), `no Files for a Vallic host: ${vallicRow}`);
   // Its SSH forwards no ports: the tunnel editor doesn't offer it.
   await s.exec(`[...document.querySelectorAll(".sidebar-nav button")].find((b) => b.innerText.startsWith("Tunnels")).click(); return true`);
   await s.clickButton("New tunnel");
@@ -513,7 +514,7 @@ try {
   // the stopped one without an address waits.
   await s.exec(`[...document.querySelectorAll(".sidebar-nav button")].find((b) => b.innerText.startsWith("Hosts")).click(); return true`);
   await s.wait(() => s.exec(`return document.querySelector(".panel.page h1")?.innerText === "Hosts" || null`), "the Hosts page");
-  await s.clickButton("Clouds…");
+  await s.addFrom("Clouds…");
   // The page shows what to add once it has listed the sources.
   await s.waitText("Add AWS", ".cloud-page", 30000);
   await s.clickButton("Add AWS");
@@ -544,7 +545,7 @@ try {
   // connection goes through `aws ssm start-session` (the stand-in relays it to this sshd).
   await s.exec(`[...document.querySelectorAll(".sidebar-nav button")].find((b) => b.innerText.startsWith("Hosts")).click(); return true`);
   await s.wait(() => s.exec(`return document.querySelector(".panel.page h1")?.innerText === "Hosts" || null`), "the Hosts page");
-  await s.clickButton("Clouds…");
+  await s.addFrom("Clouds…");
   await s.waitText("123456789012", ".cloud-source", 30000);
   await s.exec(
     `const card = [...document.querySelectorAll(".cloud-source")].find((x) => x.innerText.includes("123456789012"));
@@ -585,7 +586,7 @@ try {
   // for the source; its droplet (this sshd) connects.
   await s.exec(`[...document.querySelectorAll(".sidebar-nav button")].find((b) => b.innerText.startsWith("Hosts")).click(); return true`);
   await s.wait(() => s.exec(`return document.querySelector(".panel.page h1")?.innerText === "Hosts" || null`), "the Hosts page");
-  await s.clickButton("Clouds…");
+  await s.addFrom("Clouds…");
   await s.waitText("Add DigitalOcean", ".cloud-page", 30000);
   await s.clickButton("Add DigitalOcean");
   await s.waitText("is signed in as e2e@example.com (E2E)", ".cloud-adding", 30000);
@@ -628,8 +629,8 @@ try {
   await s.clickButton("Select");
   const pick = (label) =>
     s.exec(
-      `const li = [...document.querySelectorAll(".panel.page li.picking")].find((l) => l.querySelector("strong")?.innerText === arguments[0]);
-       if (!li) throw new Error("no row " + arguments[0]); li.click(); return true`,
+      `const row = [...document.querySelectorAll(".panel.page [role=row].picking")].find((r) => r.querySelector(".lname")?.innerText === arguments[0]);
+       if (!row) throw new Error("no row " + arguments[0]); row.click(); return true`,
       label,
     );
   await pick("e2e-csv");
@@ -640,8 +641,8 @@ try {
   await s.waitText("Moved 2 hosts.", ".select-bar-wrap", 30000);
   await s.wait(
     () =>
-      s.exec(`const section = [...document.querySelectorAll(".panel.page section")].find((x) => x.querySelector(".group-title")?.innerText.includes("E2E Lab"));
-              const names = section ? [...section.querySelectorAll("li strong")].map((x) => x.innerText) : [];
+      s.exec(`const section = [...document.querySelectorAll(".panel.page .lsection")].find((x) => x.querySelector(".lghead")?.innerText.includes("E2E Lab"));
+              const names = section ? [...section.querySelectorAll(".lname")].map((x) => x.innerText) : [];
               return names.includes("e2e-csv") && names.includes("e2e-royal") || null`),
     "both hosts in E2E Lab",
   );
@@ -934,7 +935,7 @@ try {
   await s.exec(`document.querySelector("form button[type=submit]").click(); return true`);
   await s.wait(() => s.exec(`return document.querySelector("button.brand") ? true : null`), "the workspace", 60000);
   // A vault with hosts opens on them (with none, on quick connect).
-  assert.ok(await s.exec(`return document.querySelectorAll(".sidebar .row-title").length > 0`), "the vault still has hosts");
+  await s.wait(() => s.exec(`return document.querySelectorAll(".sidebar .row-title").length > 0 || null`), "the vault's hosts", 30000);
   await s.wait(() => s.exec(`return document.querySelector(".panel.page h1")?.innerText === "Hosts" || null`), "the Hosts page as home");
   assert.match(await openAbout(s), new RegExp(`Version ${next} · AppImage`));
   await checkNow(s);

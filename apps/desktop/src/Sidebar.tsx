@@ -46,6 +46,8 @@ interface Props {
   /** Hosts with an open session. */
   live: Map<string, LiveState>;
   onConnect: (host: HostView) => void;
+  /** A host with a session: its tab. */
+  onShowSession: (host: HostView) => void;
   onOpenFiles: (host: HostView) => void;
   onEditHost: (id?: string) => void;
   syncStatus: SyncStatus | null;
@@ -96,6 +98,7 @@ export function Sidebar({
   activeHost,
   live,
   onConnect,
+  onShowSession,
   onOpenFiles,
   onEditHost,
   syncStatus,
@@ -157,16 +160,21 @@ export function Sidebar({
     </button>
   );
 
-  const hostRow = (h: HostView, i: number) => {
+  // `session`: a row of the Open list, which goes to the host's tab.
+  const hostRow = (h: HostView, i: number, session = false) => {
     const on = selected === h.id || activeHost === h.id;
     const state = live.get(h.id);
     return (
       <li key={h.id} className={`${on ? "selected" : ""} ${band(i)} ${h.source?.gone ? "gone" : ""}`}>
-        <button className="row-main" onClick={() => onConnect(h)} title={`Connect to ${h.user}@${h.hostname}:${h.port}`}>
-          <span className={`avatar ${on ? "on" : ""}`}>
-            {(h.label[0] ?? "?").toUpperCase()}
-            {state && <i className={`live ${state}`} title={state === "connected" ? "Connected" : "Connecting"} />}
-          </span>
+        <button
+          className="row-main"
+          onClick={() => (session ? onShowSession(h) : onConnect(h))}
+          title={session ? `Go to ${h.label}'s session` : `Connect to ${h.user}@${h.hostname}:${h.port}`}
+        >
+          <span
+            className={`sq ${state ?? "idle"}`}
+            title={state === "connected" ? "Connected" : state === "connecting" ? "Connecting" : "Not connected"}
+          />
           <span className="row-text">
             <span className="row-title">{h.label}</span>
             <span className="row-sub mono">
@@ -196,6 +204,8 @@ export function Sidebar({
     );
   };
   const ungrouped = shown.filter((h) => !h.groupId || !groups.some((g) => g.id === h.groupId));
+  // Hosts with a session, first: where people go back to most.
+  const sessions = [...live.keys()].map((id) => hosts.find((h) => h.id === id)).filter((h): h is HostView => !!h && (!q || matches(h, q)));
 
   return (
     <aside className="sidebar">
@@ -238,6 +248,12 @@ export function Sidebar({
       </label>
 
       <div className="sidebar-scroll">
+        {sessions.length > 0 && (
+          <>
+            <Section title="Open" />
+            <ul className="list">{sessions.map((h, i) => hostRow(h, i, true))}</ul>
+          </>
+        )}
         <Section
           title="Hosts"
           onNew={() => onEditHost()}
@@ -350,16 +366,18 @@ export function Sidebar({
   );
 }
 
-function Section({ title, onNew, newLabel, extra }: { title: string; onNew: () => void; newLabel: string; extra?: ReactNode }) {
+function Section({ title, onNew, newLabel, extra }: { title: string; onNew?: () => void; newLabel?: string; extra?: ReactNode }) {
   return (
     <div className="section-head">
       <span className="grow">{title}</span>
       {extra}
-      <button className="icon small" onClick={onNew} title={newLabel} aria-label={newLabel}>
-        <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-          <path d="M12 5v14M5 12h14" />
-        </svg>
-      </button>
+      {onNew && (
+        <button className="icon small" onClick={onNew} title={newLabel} aria-label={newLabel}>
+          <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+            <path d="M12 5v14M5 12h14" />
+          </svg>
+        </button>
+      )}
     </div>
   );
 }

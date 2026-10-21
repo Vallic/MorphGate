@@ -131,14 +131,14 @@ try {
   await s.waitText("selected", ".select-bar");
   await shoot(s, "hosts-selecting");
   await s.clickButton("Done");
-  await s.clickButton("Clouds…");
+  await s.addFrom("Clouds…");
   await s.waitText("Connect Vallic Cloud", ".panel");
   await shoot(s, "vallic-cloud");
   await s.clickButton("Close");
 
   // Groups, a group's page with everything in it, and its editor full screen.
   const groupPage = async () => {
-    await s.exec(`[...document.querySelectorAll(".panel button.title-link")].find((b) => b.innerText === "Production").click(); return true`);
+    await s.exec(`[...document.querySelectorAll(".panel button.lnamebtn")].find((b) => b.querySelector(".lname")?.innerText === "Production").click(); return true`);
     await s.wait(() => s.exec(`return document.querySelector(".panel.page h1")?.innerText === "Production" || null`), "the Production group's page");
   };
   await page(s, "Groups");
@@ -159,7 +159,7 @@ try {
   await s.click(".panel form button[type=submit]");
   await s.waitText("Save changes", ".panel");
   await s.clickButton("Close");
-  await s.wait(() => s.hasText(".panel strong", "Tail nginx errors"), "the snippet on its page");
+  await s.wait(() => s.hasText(".panel .lname", "Tail nginx errors"), "the snippet on its page");
   await shoot(s, "snippets");
 
   await page(s, "Tunnels");
@@ -173,7 +173,7 @@ try {
   await s.click(".panel form button[type=submit]");
   await s.waitText("Edit tunnel", ".panel");
   await s.clickButton("Cancel");
-  await s.wait(() => s.hasText(".panel strong", "Postgres on prod"), "the tunnel on its page");
+  await s.wait(() => s.hasText(".panel .lname", "Postgres on prod"), "the tunnel on its page");
   await shoot(s, "tunnels");
 
   await page(s, "VPNs");
@@ -185,26 +185,42 @@ try {
   await s.typeLabelled("Server", "vpn.client.example");
   await s.click(".panel form button[type=submit]");
   await s.wait(() => s.exec(`return document.querySelector(".panel.page h1")?.innerText === "VPNs" || null`), "the VPNs page again");
-  await s.wait(() => s.hasText(".panel strong", "Client office"), "the VPN on its page");
+  await s.wait(() => s.hasText(".panel .lname", "Client office"), "the VPN on its page");
   await shoot(s, "vpns");
   await page(s, "Keys");
   await shoot(s, "keys");
 
   // A team with a vault and an invite to a long address.
   await s.click("button.sidebar-foot.teams");
-  await s.wait(() => s.exec(`return document.querySelector('input[aria-label="Organization name"]') ? true : null`), "the teams page");
+  await s.wait(() => s.exec(`return [...document.querySelectorAll(".panel button")].some((b) => b.innerText === "New team") || null`), "the teams page");
   await shoot(s, "teams-list");
-  await s.type('input[aria-label="Organization name"]', "Acme Operations International");
-  await s.clickButton("Create");
+  await s.clickButton("New team");
+  await s.type('input[aria-label="Team name"]', "Acme Operations International");
+  await s.clickButton("Create team");
+  await s.wait(() => s.exec(`return document.querySelector(".panel.page h1")?.innerText === "Acme Operations International" || null`), "the team's page");
+  await s.pageTab("Vaults");
   await s.waitText("No vaults yet", ".panel");
   await s.type('input[aria-label="New vault name"]', "Production databases");
   await s.clickButton("New vault");
-  await s.wait(() => s.hasText(".panel .device-list strong", "Production databases"), "the new vault");
-  await s.type('input[aria-label="Email to invite"]', "someone.with.a.long.address@example.com");
+  await s.wait(() => s.hasText(".panel .lname", "Production databases"), "the new vault");
+  await shoot(s, "org-vaults");
+  await s.clickButton("Invite people");
+  await s.type('input[aria-label="Emails to invite"]', "someone.with.a.long.address@example.com, another.person@example.com");
   await s.click(".grants input[type=checkbox]");
-  await s.clickButton("Invite");
-  await s.wait(() => s.exec(`return document.querySelector(".invite-code") ? true : null`), "the invite code");
+  await shoot(s, "invite", "dialog.invite-dialog");
+  await s.clickButton("Send 2 invites");
+  await s.wait(() => s.exec(`return document.querySelector(".invite-code") ? true : null`), "the invite codes");
+  await shoot(s, "invite-sent", "dialog.invite-dialog");
+  await s.clickButton("Done");
+  await s.pageTab("Members");
+  await s.wait(() => s.hasText(".panel .lname", "someone.with.a.long.address@example.com"), "the invites in Members");
   await shoot(s, "org");
+  await s.pageTab("Settings");
+  await s.waitText("Require two-step verification", ".panel");
+  await shoot(s, "org-settings");
+  await s.pageTab("Activity");
+  await s.waitText("invited someone.with.a.long.address@example.com", ".panel");
+  await shoot(s, "org-activity");
 
   // Moving the group into the team's vault: the plan, then cancel.
   await page(s, "Groups");

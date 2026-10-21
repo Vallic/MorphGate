@@ -43,7 +43,7 @@ Refresh tokens rotate and a replayed one ends the sign-in, so `CloudState` lets 
 
 ## Adding a source
 
-The Hosts page's **Clouds…** (desktop) opens "Clouds": each source, then a **Vault** choice and **Connect Vallic Cloud** (**Connect another Vallic account** once there is one), **Add AWS**, **Add Google Cloud**, **Add Azure**, **Add Hetzner Cloud**, **Add DigitalOcean**.
+The Hosts page's **Add from…** → **Clouds…** (desktop) opens "Clouds": each source, then a **Vault** choice and **Connect Vallic Cloud** (**Connect another Vallic account** once there is one), **Add AWS**, **Add Google Cloud**, **Add Azure**, **Add Hetzner Cloud**, **Add DigitalOcean**.
 
 ### Vallic Cloud
 
