@@ -60,6 +60,18 @@ async function quickConnect(s) {
   await s.exec(`document.querySelector("button[type=submit].primary").click(); return true`);
 }
 
+/** Clicks "Check now" in About and waits for that check to finish: the update shown before it
+ *  may be from the check at launch, and Install takes the one the last finished check found. */
+async function checkNow(s) {
+  await s.exec(`const b = [...document.querySelectorAll("button")].find((b) => b.innerText.includes("Check now") && !b.disabled);
+    if (!b) throw new Error("no enabled button Check now");
+    window.__checked = false;
+    new MutationObserver((_, o) => { if (b.innerText.includes("Check now")) { window.__checked = true; o.disconnect(); } })
+      .observe(b, { subtree: true, childList: true, characterData: true });
+    b.click(); return true`);
+  await s.wait(() => s.exec(`return window.__checked || null`), "the update check", 60000);
+}
+
 let s = await session(app);
 try {
   // A guessable master password is refused, and the form says why.
@@ -861,7 +873,7 @@ try {
   // A tampered download is refused and the AppImage stays as it was.
   const before = sha(app);
   copyFileSync(`${feed}/latest-tampered.json`, `${feed}/latest.json`);
-  await s.clickButton("Check now");
+  await checkNow(s);
   await s.waitText(`MorphGate ${next} is available`);
   await s.clickButton("Install and restart");
   assert.match(await s.wait(s.panelError, "the refusal", 120000), /signature/);
@@ -879,7 +891,7 @@ try {
 
   // The signed update installs, and the app restarts by itself.
   copyFileSync(`${feed}/latest-good.json`, `${feed}/latest.json`);
-  await s.clickButton("Check now");
+  await checkNow(s);
   await s.waitText(`MorphGate ${next} is available`);
   await s.screenshot(`${shots}/update-available.png`);
   await s.clickButton("Install and restart");
@@ -922,7 +934,7 @@ try {
   await s.exec(`document.querySelector("form button[type=submit]").click(); return true`);
   await s.wait(() => s.exec(`return document.querySelector("button.brand") ? true : null`), "the workspace", 60000);
   assert.match(await openAbout(s), new RegExp(`Version ${next} · AppImage`));
-  await s.clickButton("Check now");
+  await checkNow(s);
   await s.waitText("up to date");
   await s.screenshot(`${shots}/updated.png`);
   ok(`unlocked the same vault in ${next}, which is up to date`);

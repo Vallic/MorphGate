@@ -54,7 +54,7 @@ After installing, `app.restart()` quits. On the way out the shell stops tunnels,
 | **Check for updates automatically** | `set_auto_update_check`. Hint: "At launch and twice a day MorphGate asks GitHub for the latest release. Nothing from your vault is sent. Updates are signed, and MorphGate installs only ones signed with its key." |
 | Update notice | "MorphGate X is available", "Released …", and the release notes |
 | **Install and restart** | `update_install`. Before it: "Open terminals, file browsers, tunnels and VPNs close when MorphGate restarts." (plus "Installing a package asks for an administrator password." for deb and rpm). During: a progress bar, "Downloading… 12.3 MiB of 40.1 MiB", then "Installing… MorphGate restarts when it's done." |
-| **Check now** | `update_check`; "Checking…" while it runs; "MorphGate is up to date." when nothing is newer |
+| **Check now** | `update_check`; "Checking…" while it runs, and **Install and restart** waits for it (Install takes the update the last finished check found); "MorphGate is up to date." when nothing is newer |
 | **Close** | Back to the workspace |
 
 On phones the Updates section is one line instead: "MorphGate updates through the App Store." on iOS, "MorphGate updates through Google Play, or by installing the next APK." on Android.
