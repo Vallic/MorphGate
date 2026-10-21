@@ -67,6 +67,57 @@ pub fn password_strength(password: String) -> Strength {
     strength(&password)
 }
 
+/// EFF's long wordlist (`wordlist/README.md`): dice numbers, a tab, a word.
+const WORDLIST: &str = include_str!("../wordlist/eff_large_wordlist.txt");
+/// Words in a suggestion: about 64 bits from the 7772 used.
+const SUGGESTED_WORDS: usize = 5;
+
+/// The list's words, but for the four with a hyphen (the separator).
+fn words() -> Vec<&'static str> {
+    WORDLIST
+        .lines()
+        .filter_map(|l| l.split_once('\t').map(|(_, w)| w.trim()))
+        .filter(|w| !w.is_empty() && w.bytes().all(|b| b.is_ascii_lowercase()))
+        .collect()
+}
+
+/// A number below `n`, every one as likely (no modulo bias).
+fn below(n: u32) -> Result<u32, String> {
+    let zone = u32::MAX - u32::MAX % n;
+    loop {
+        let mut b = [0u8; 4];
+        getrandom::fill(&mut b).map_err(|e| format!("no randomness from the system: {e}"))?;
+        let x = u32::from_le_bytes(b);
+        if x < zone {
+            return Ok(x % n);
+        }
+    }
+}
+
+/// Five words at random, joined by hyphens: easy to write down and type, hard to guess. Ones the
+/// strength check would refuse (rarely: a run of very common words) are drawn again.
+pub(crate) fn suggest() -> Result<String, String> {
+    let list = words();
+    let n = u32::try_from(list.len()).map_err(|_| "the wordlist is too long")?;
+    for _ in 0..16 {
+        let mut picked = Vec::with_capacity(SUGGESTED_WORDS);
+        for _ in 0..SUGGESTED_WORDS {
+            picked.push(list[below(n)? as usize]);
+        }
+        let password = picked.join("-");
+        if strength(&password).ok {
+            return Ok(password);
+        }
+    }
+    Err("couldn't come up with a strong password; type one instead".into())
+}
+
+/// A master password to suggest.
+#[tauri::command]
+pub fn password_suggest() -> Result<String, String> {
+    suggest()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -91,5 +142,25 @@ mod tests {
         }
         let s = strength("P@ssw0rd123");
         assert!(!s.ok && s.warning.is_some());
+    }
+
+    #[test]
+    fn suggestions_are_five_listed_words_that_pass() {
+        let list = words();
+        assert_eq!(
+            list.len(),
+            7776 - 4,
+            "the list as published, but for the hyphenated four"
+        );
+        let mut seen = std::collections::HashSet::new();
+        for _ in 0..50 {
+            let p = suggest().unwrap();
+            let parts: Vec<&str> = p.split('-').collect();
+            assert_eq!(parts.len(), SUGGESTED_WORDS, "{p}");
+            assert!(parts.iter().all(|w| list.contains(w)), "{p}");
+            assert!(check(&p).is_ok(), "{p}");
+            seen.insert(p);
+        }
+        assert_eq!(seen.len(), 50, "suggestions repeat");
     }
 }

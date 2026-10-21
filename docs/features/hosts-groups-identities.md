@@ -106,6 +106,8 @@ An `attachment` is `name` (as added, without a path), `host_ref`, `blob` (hex SH
 
 The sidebar (`Sidebar.tsx`) is for connecting; the pages (`Lists.tsx`) are for managing.
 
+On desktop, once the vault has hosts, the Hosts page is home: the workspace opens on it after unlocking, and closing the last tab or page returns to it (`home()` in `App.tsx`). With no hosts, home is quick connect. Closing the Hosts page itself goes to quick connect. On phones the start screen is the host list either way.
+
 | Sidebar part | What it does |
 | --- | --- |
 | Navigation | **Hosts**, **Groups**, **Keys** (keys and identities counted together), **Snippets**, **Tunnels** ("2 on"), **VPNs** ("1 up"), and **Session logs** once a host records |
@@ -115,7 +117,7 @@ The sidebar (`Sidebar.tsx`) is for connecting; the pages (`Lists.tsx`) are for m
 
 | Page | Content |
 | --- | --- |
-| Hosts | **Import…** and **Clouds…** (desktop), **Select**, **New group**, **New host**; "Not in a group", then a section per group with **Edit group** and what its hosts use; rows with **Connect**, **Files**, **Edit**, tags, and badges "gone from AWS" or the machine's state ("stopped") |
+| Hosts | **Quick connect**, **Import…** and **Clouds…** (desktop), **Select**, **New group**, **New host**; "Not in a group", then a section per group with **Edit group** and what its hosts use; rows with **Connect**, **Files**, **Edit**, tags, and badges "gone from AWS" or the machine's state ("stopped") |
 | Groups | Each group with its host count and defaults; **Open**, **Edit** |
 | A group | Its hosts, the tunnels through them, their files (**Save**), and "What its hosts use" (identities, keys, jump hosts, VPNs); **Move to…**, **Edit group** |
 | Keys | Keys, then **Identities** (**New identity**) and **Host CAs** |

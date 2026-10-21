@@ -62,9 +62,14 @@ async function page(s, label) {
 
 const s = await session(app);
 try {
-  // The first screen: a new vault, or the account used on other devices.
+  // The first screen: a new vault, a new account, or the account used on other devices.
   await s.wait(() => s.exec(`return document.querySelector(".gate-choice") ? true : null`), "the first screen");
-  await s.exec(`[...document.querySelectorAll(".gate-choice button")].find((b) => b.innerText === "I have an account").click(); return true`);
+  await s.exec(`[...document.querySelectorAll(".gate-choice button")].find((b) => b.innerText === "New account").click(); return true`);
+  await s.waitText("Create your account");
+  await s.clickButton("Suggest a strong password");
+  await s.wait(() => s.exec(`return document.querySelector(".suggested-password") ? true : null`), "a suggested password");
+  await shoot(s, "first-run-new-account", ".gate");
+  await s.exec(`[...document.querySelectorAll(".gate-choice button")].find((b) => b.innerText === "Sign in").click(); return true`);
   await s.waitText("Sign in to sync");
   await shoot(s, "first-run-sign-in", ".gate");
   await s.exec(`[...document.querySelectorAll(".gate-choice button")].find((b) => b.innerText === "New vault").click(); return true`);

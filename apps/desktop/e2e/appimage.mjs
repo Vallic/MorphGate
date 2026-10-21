@@ -933,6 +933,9 @@ try {
   await s.type("input[autocomplete=current-password]", PASSWORD);
   await s.exec(`document.querySelector("form button[type=submit]").click(); return true`);
   await s.wait(() => s.exec(`return document.querySelector("button.brand") ? true : null`), "the workspace", 60000);
+  // A vault with hosts opens on them (with none, on quick connect).
+  assert.ok(await s.exec(`return document.querySelectorAll(".sidebar .row-title").length > 0`), "the vault still has hosts");
+  await s.wait(() => s.exec(`return document.querySelector(".panel.page h1")?.innerText === "Hosts" || null`), "the Hosts page as home");
   assert.match(await openAbout(s), new RegExp(`Version ${next} · AppImage`));
   await checkNow(s);
   await s.waitText("up to date");

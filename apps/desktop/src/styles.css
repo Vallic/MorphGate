@@ -481,6 +481,13 @@ button.with-icon {
   color: var(--ink-muted);
 }
 
+/* A suggested master password, in the clear while both fields hold it. */
+.suggested-password .mono {
+  font-size: 15px;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
 .meter {
   display: grid;
   grid-template-columns: repeat(3, 1fr);

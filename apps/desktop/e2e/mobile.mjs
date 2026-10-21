@@ -33,6 +33,13 @@ const tapText = (css, text) =>
 
 try {
   await s.resize(390, 844);
+  // The first screen's three choices fit a phone.
+  await s.wait(() => s.exec(`return document.querySelector(".gate-choice") ? true : null`), "the first screen", 60000);
+  assert.ok(
+    await s.exec(`return [...document.querySelectorAll(".gate-choice button")].every((b) => b.scrollWidth <= b.clientWidth && b.getBoundingClientRect().height < 40)`),
+    "the choices fit on one line",
+  );
+  await s.screenshot(`${shots}/first-screen.png`);
   await createVault(s, PASSWORD, shots);
   await s.wait(() => s.exec(`return document.querySelector(".m-home") ? true : null`), "the phone layout");
   ok("a phone-sized window gets the phone layout");

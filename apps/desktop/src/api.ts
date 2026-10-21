@@ -117,6 +117,8 @@ export interface PasswordStrength {
 export const vault = {
   /** How strong a master password would be (desktop and phone check alike). */
   strength: (password: string) => invoke<PasswordStrength>("password_strength", { password }),
+  /** Five random words from EFF's long wordlist: a master password to suggest. */
+  suggest: () => invoke<string>("password_suggest"),
   status: () => invoke<VaultStatus>("vault_status"),
   /** Resolves to the recovery code, shown once. */
   create: (password: string) => invoke<string>("vault_create", { password }),
@@ -881,6 +883,8 @@ export const teams = {
   invites: (orgId: string) => invoke<InviteView[]>("org_invites", { orgId }),
   cancelInvite: (orgId: string, inviteId: string) => invoke<void>("org_invite_cancel", { orgId, inviteId }),
   preview: (token: string) => invoke<InvitePreview>("invite_preview", { token }),
+  /** What an invite is for, before there's an account (no sign-in needed). */
+  peek: (server: string, token: string) => invoke<InvitePreview>("invite_peek", { server, token }),
   /** `fingerprint`: the owner's, as compared; joining fails if it no longer matches. */
   accept: (token: string, fingerprint: string) => invoke<string>("invite_accept", { token, fingerprint }),
   confirm: (orgId: string, accountId: string, fingerprint: string) =>
@@ -928,6 +932,11 @@ export interface ReceivedLink {
 export const links = {
   /** The links received since the last call (waiting while the vault was locked). */
   take: () => invoke<ReceivedLink[]>("links_take"),
+  /** The same, left waiting (the first screen shows an invite before there's a vault). */
+  peek: () => invoke<ReceivedLink[]>("links_peek"),
+  /** An invite pasted on the first screen (its code, its web page, or a morphgate:// link): it
+   * waits with the other links, for Teams once there's an account. */
+  addInvite: (text: string) => invoke<void>("links_add_invite", { text }),
 };
 
 // ------------------------------------------------------------------ SSH agents

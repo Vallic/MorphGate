@@ -139,6 +139,22 @@ for (const [name, url] of [
   components.push({ name, license: "OFL-1.1", kind: "font", url, texts: [ofl] });
 }
 
+// Data: EFF's long wordlist, for suggested master passwords (src-tauri/wordlist/README.md).
+components.push({
+  name: "EFF's long wordlist",
+  license: "CC-BY-3.0-US",
+  kind: "data",
+  url: "https://www.eff.org/dice",
+  texts: [
+    textId(
+      "EFF's long wordlist for passphrases, by the Electronic Frontier Foundation (https://www.eff.org/dice), " +
+        "is licensed under the Creative Commons Attribution 3.0 United States License " +
+        "(https://creativecommons.org/licenses/by/3.0/us/). MorphGate uses its words as published, " +
+        "leaving out the four that contain a hyphen.\n",
+    ),
+  ],
+});
+
 // Android: the Java libraries the app, Tauri and its plugins name in their Gradle files.
 if (target.includes("android")) {
   const apache = textId(STANDARD["Apache-2.0"]());
@@ -167,7 +183,7 @@ writeFileSync(out, json);
 for (const w of warnings) console.warn(`licenses: ${w}`);
 const count = (k) => components.filter((c) => c.kind === k).length;
 console.log(
-  `licenses: ${count("crate")} crates, ${count("npm")} npm packages, ${count("font")} fonts` +
+  `licenses: ${count("crate")} crates, ${count("npm")} npm packages, ${count("font")} fonts, ${count("data")} word list` +
     (count("android") ? `, ${count("android")} Android libraries` : "") +
     ` for ${target}; ${texts.length} texts, ${Math.round(json.length / 1024)} KiB`,
 );

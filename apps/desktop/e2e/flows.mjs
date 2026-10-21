@@ -98,10 +98,10 @@ export async function signUp(s, { server, email, mailpit, password = PASSWORD })
   await s.waitText("Last sync", ".panel", 60000);
 }
 
-/** J3: the first screen's "I have an account" (a fresh device). */
+/** J3: the first screen's "Sign in" (a fresh device). */
 export async function signInFresh(s, { server, email, password = PASSWORD }) {
   await s.wait(() => s.exec(`return document.querySelector(".gate-choice") ? true : null`), "the first screen");
-  await s.exec(`[...document.querySelectorAll(".gate-choice button")].find((b) => b.innerText === "I have an account").click(); return true`);
+  await s.exec(`[...document.querySelectorAll(".gate-choice button")].find((b) => b.innerText === "Sign in").click(); return true`);
   await chooseServer(s, server);
   await s.typeLabelled("Email", email);
   await s.typeLabelled("Master password", password);
@@ -184,15 +184,70 @@ export async function invite(s, email, { mailpit } = {}) {
 /** T2 (the invitee): joins after checking the owner's fingerprint. Returns the member's own. */
 export async function acceptInvite(s, token, ownerFp, team) {
   await openTeams(s);
-  const fp = await fingerprint(s);
   await s.type('input[aria-label="Invite code"]', token);
   await s.clickButton("Look up");
-  await s.waitText("Join only if", ".panel");
+  return joinLookedUp(s, ownerFp, team);
+}
+
+/** T2 (the invitee, in Teams with the invite looked up): compares the owner's fingerprint and
+ * joins. Returns the member's own. */
+export async function joinLookedUp(s, ownerFp, team) {
+  await s.waitText("Join only if", ".panel", 30000);
+  const fp = await fingerprint(s, ".page-aside .fingerprint");
   assert.equal(await fingerprint(s, ".notice-box .fingerprint"), ownerFp);
   await s.click(".notice-box label.check input");
   await s.clickButton(`Join ${team}`);
   await s.waitText("An admin confirms you next", ".panel", 30000);
   return fp;
+}
+
+/**
+ * J2 and T2 on a fresh install: the invite pasted on the first screen ("Joining a team?"), a new
+ * account with the address it names and a suggested password, then Teams opens with the invite
+ * looked up. Returns the password.
+ */
+export async function newAccountFromInvite(s, { invite, team, email, mailpit, shots }) {
+  await s.wait(() => s.exec(`return document.querySelector(".gate-choice") ? true : null`), "the first screen");
+  await s.clickButton("Joining a team? Paste your invite");
+  await s.typeLabelled("Invite code or link", invite);
+  await s.clickButton("Use this invite");
+  await s.waitText(`to join ${team}`, ".gate-invite", 30000);
+  // An invite needs an account: offered first, with the invited address.
+  await s.waitText("Create your account", ".gate-card");
+  await s.wait(() => s.exec(`return document.querySelector(".gate-card input[type=email]")?.value === arguments[0] || null`, email), "the invited address");
+  await s.clickButton("Suggest a strong password");
+  const password = await s.wait(() => s.exec(`return document.querySelector(".suggested-password .mono")?.innerText || null`), "a suggested password");
+  if (shots) await s.screenshot(`${shots}/first-screen-invite.png`);
+  // The server's terms, once it was asked what it needs (none on a server without them).
+  await s.wait(() => s.exec(`return document.querySelector(".gate-card .terms-check") ? true : null`), "the terms", 10000).catch(() => {});
+  if (await s.exec(`return !!document.querySelector(".gate-card .terms-check input")`)) await s.click(".gate-card .terms-check input");
+  // The recovery key (the account is made), an error, or (`code`: the first step) the mailed code's field.
+  const step = (code, what, ms) =>
+    s.wait(
+      () =>
+        s.exec(
+          `const e = document.querySelector(".gate-card p.error"); if (e) return { error: e.innerText };
+          if (document.querySelector(".recovery-code")) return "done";
+          return arguments[0] && [...document.querySelectorAll(".gate-card label span")].some((l) => l.innerText.startsWith("Code sent to")) ? "code" : null`,
+          code,
+        ),
+      what,
+      ms,
+    );
+  const since = Date.now();
+  await s.click(".gate-card form button.primary");
+  let next = await step(true, "a mailed code, or the account", 60000);
+  if (next === "code") {
+    assert.ok(mailpit, "the server mails a code: pass where to read it (Mailpit)");
+    await s.typeLabelled("Code sent to", await mailedCode(mailpit, email, since));
+    await s.click(".gate-card form button.primary");
+    next = await step(false, "the account", 90000);
+  }
+  assert.equal(next, "done", JSON.stringify(next));
+  await s.click(".gate-card label.check input");
+  await s.exec(`[...document.querySelectorAll(".gate-card button.primary")].find((b) => !b.disabled).click(); return true`);
+  await s.wait(() => s.exec(`return document.querySelector("button.brand, .m-home") ? true : null`), "the workspace", 30000);
+  return password;
 }
 
 /** T2 (an owner or admin, in the organization's page): confirms `email` after checking its fingerprint. */

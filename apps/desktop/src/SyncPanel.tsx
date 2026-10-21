@@ -5,7 +5,6 @@ import {
   platformName,
   errorText,
   isTotpRequired,
-  openLink,
   ownsTeam,
   sync,
   totpTitle,
@@ -22,6 +21,7 @@ import {
 import { Page } from "./Page";
 import { HOSTED_SERVER, SyncServerField } from "./SyncServerField";
 import { isTotpCode, TotpCode } from "./TotpCode";
+import { TermsCheck, TermsLinks } from "./Terms";
 import { RecoveryCode } from "./VaultGate";
 import { mobileOs } from "./mobile/useMobile";
 
@@ -467,32 +467,6 @@ function Setup({ onChanged, onJoined }: { onChanged: () => void; onJoined: (emai
         {busy ? (emailCode === null ? "Checking…" : "Creating account and uploading…") : "Enable sync"}
       </button>
     </form>
-  );
-}
-
-/** The server's terms of use and privacy policy, each opening in the browser. */
-function TermsLinks({ terms }: { terms: SyncTerms }) {
-  return (
-    <>
-      <button type="button" className="link inline" onClick={() => void openLink(terms.termsUrl)}>
-        terms of use
-      </button>{" "}
-      and the{" "}
-      <button type="button" className="link inline" onClick={() => void openLink(terms.privacyUrl)}>
-        privacy policy
-      </button>
-    </>
-  );
-}
-
-function TermsCheck({ terms, accepted, onChange }: { terms: SyncTerms; accepted: boolean; onChange: (v: boolean) => void }) {
-  return (
-    <label className="check terms-check">
-      <input type="checkbox" checked={accepted} onChange={(e) => onChange(e.target.checked)} />
-      <span>
-        I accept the <TermsLinks terms={terms} />.
-      </span>
-    </label>
   );
 }
 

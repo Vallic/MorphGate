@@ -711,7 +711,7 @@ try {
   assert.match(notice, new RegExp(`signed out of ${bobEmail.replace(/[.+]/g, "\\$&")} from another device`));
   assert.ok(await carol.exec(`return !!document.querySelector(".gate-choice")`), "back at the first screen");
   await carol.screenshot(`${shots}/carol-signed-out.png`);
-  await carol.exec(`[...document.querySelectorAll(".gate-choice button")].find((b) => b.innerText === "I have an account").click(); return true`);
+  await carol.exec(`[...document.querySelectorAll(".gate-choice button")].find((b) => b.innerText === "Sign in").click(); return true`);
   await useOwnServer(carol);
   await carol.typeLabelled("Email", bobEmail);
   await carol.typeLabelled("Master password", PASSWORD);

@@ -305,6 +305,16 @@ pub async fn invite_preview(
     .await
 }
 
+/// What an invite is for, before there's an account (the first screen): `server` is the one the
+/// link names, or the one chosen there.
+#[tauri::command]
+pub async fn invite_peek(server: String, token: String) -> Result<InvitePreview, String> {
+    let client = SyncClient::new(&server).map_err(|e| e.to_string())?;
+    sharing::preview_invite(&client, &token)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub async fn invite_accept(
     vault: State<'_, VaultState>,

@@ -82,7 +82,7 @@ Owners and admins see **Invites** beside the team.
 | "This server doesn't email invites. Send this code to {email} (it works once, for that address, for 7 days):", **Copy code**, **Done** | When the server returned the token (`mails_invites: false`) |
 | "Invite emailed to {email}." | Otherwise |
 
-An invite page on the web opens `morphgate://invite?token=…&server=…` (or `morphgate://invite/{token}`). The app opens Teams with the code looked up, after checking that sync is on (otherwise it opens Sync: "Turn on sync with the invited address first, then open the link again") and that `server` is the server this device syncs with. A link never joins by itself. See [Deep links](deep-links.md).
+An invite page on the web opens `morphgate://invite?token=…&server=…` (or `morphgate://invite/{token}`). The app opens Teams with the code looked up, after checking that sync is on (otherwise it opens Sync, and Teams once sync is on) and that `server` is the server this device syncs with. Opened before the app has a vault, the first screen shows the invite and offers a new account with its address ([First run](vault-and-unlock.md#first-run)). A link never joins by itself. See [Deep links](deep-links.md).
 
 ## Joining
 

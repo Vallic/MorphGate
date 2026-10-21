@@ -43,6 +43,7 @@ import {
   type TerminalSettings,
   type VaultTheme,
   type SecurityKeyTouch,
+  type Link,
   type ReceivedLink,
 } from "./api";
 import { AppearancePanel } from "./AppearancePanel";
@@ -286,8 +287,9 @@ function Workspace({ onLock, termSettings, onSettingsChanged: loadTermSettings, 
         return open({ kind: "teams" });
       case "invite":
         if (!syncStatus?.enabled || syncStatus.signedOut) {
+          setWaitingInvite(link);
           setNotice(
-            `This is an invite to a team${link.server ? ` on ${new URL(link.server).host}` : ""}. Turn on sync with the invited address first, then open the link again.`,
+            `This is an invite to a team${link.server ? ` on ${new URL(link.server).host}` : ""}. Turn on sync with the invited address: Teams opens with the invite once it's on.`,
           );
           return open({ kind: "sync" });
         }
@@ -301,13 +303,24 @@ function Workspace({ onLock, termSettings, onSettingsChanged: loadTermSettings, 
         return open({ kind: mobile ? "connect" : "quick" });
     }
   };
+  const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
+  // Links are taken once sync's state is known: an invite needs it.
+  const statusKnown = syncStatus !== null;
   useEffect(() => {
+    if (!statusKnown) return;
     const take = () => void linksApi.take().then((all) => all.forEach((r) => openLink.current(r)), () => {});
     take();
     const unlisten = listen("links-pending", take);
     return () => void unlisten.then((f) => f());
-  }, []);
-  const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
+  }, [statusKnown]);
+  // An invite that came while sync was off: Teams opens with it once sync is on.
+  const [waitingInvite, setWaitingInvite] = useState<Link | null>(null);
+  useEffect(() => {
+    if (!waitingInvite || !syncStatus?.enabled || syncStatus.signedOut) return;
+    setWaitingInvite(null);
+    setNotice("");
+    openLink.current({ link: waitingInvite, error: null });
+  }, [waitingInvite, syncStatus?.enabled, syncStatus?.signedOut]);
 
   useEffect(() => {
     if (orgList.length === 0) return setLockedOrgs(new Set());
@@ -332,6 +345,9 @@ function Workspace({ onLock, termSettings, onSettingsChanged: loadTermSettings, 
     if (tabs.length === 0) setMobile(onPhone || narrow);
   }, [narrow, tabs.length]);
   const [view, setView] = useState<View>({ kind: "quick" });
+  // Home, where the workspace opens and where closing the last page or tab lands: the hosts once
+  // there are any (on a phone, "quick" is the host list already), else quick connect.
+  const home = (): View => (!mobile && hostList.length > 0 ? { kind: "hosts" } : { kind: "quick" });
   // The way back: closing a view returns to the page, editor or session it was opened from.
   const [trail, setTrail] = useState<View[]>([]);
   const open = (v: View) => {
@@ -346,7 +362,8 @@ function Workspace({ onLock, termSettings, onSettingsChanged: loadTermSettings, 
   };
   const close = () => {
     const rest = [...trail];
-    let next: View = { kind: "quick" };
+    // Closing home itself goes to quick connect.
+    let next: View = view.kind === "hosts" ? { kind: "quick" } : home();
     while (rest.length) {
       const v = rest.pop()!;
       if (v.kind !== "tab" || tabs.some((t) => t.key === v.key)) {
@@ -422,9 +439,14 @@ function Workspace({ onLock, termSettings, onSettingsChanged: loadTermSettings, 
     [vaults, refresh],
   );
 
+  const [loaded, setLoaded] = useState(false);
   useEffect(() => {
-    void refresh();
+    void refresh().then(() => setLoaded(true));
   }, [refresh]);
+  // Opened (unlocked) with hosts: home is the hosts, unless a link filled in quick connect meanwhile.
+  useEffect(() => {
+    if (loaded && view.kind === "quick" && !linked?.connect) setView(home());
+  }, [loaded]);
 
   useEffect(() => {
     if (view.kind === "tab" && tabs.find((t) => t.key === view.key)?.kind === "terminal") setLastTerminal(view.key);
@@ -564,7 +586,7 @@ function Workspace({ onLock, termSettings, onSettingsChanged: loadTermSettings, 
       // The next pane of the same split, else the last tab.
       const sibling = splitOf(view.key) && panes(splitOf(view.key)!.layout).find((k) => !keys.includes(k));
       const next = sibling ?? rest.at(-1)?.key;
-      setView(next !== undefined ? { kind: "tab", key: next } : { kind: "quick" });
+      setView(next !== undefined ? { kind: "tab", key: next } : home());
     }
   };
   const closeTab = (key: number) => closeTabs([key]);
@@ -896,6 +918,7 @@ function Workspace({ onLock, termSettings, onSettingsChanged: loadTermSettings, 
           onOpenGroup={(id) => open({ kind: "groupPage", id })}
           onImport={() => open({ kind: "importHosts" })}
           onCloud={() => open({ kind: "cloud" })}
+          onQuickConnect={mobile ? undefined : () => open({ kind: "quick" })}
           onClose={close}
         />
       )}

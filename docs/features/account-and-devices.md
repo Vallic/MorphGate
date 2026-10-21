@@ -57,7 +57,7 @@ A device signed out from elsewhere learns it on its next token refresh: `401 dev
 4. drops the sync session and what the last rounds learnt (`SyncState::forget`);
 5. emits `device-erased` with `{reason, email}`, and the window returns to the first screen with:
 
-> This device was signed out of {email} from another device, so MorphGate removed everything it kept here. To use the account again, sign in under “I have an account”.
+> This device was signed out of {email} from another device, so MorphGate removed everything it kept here. To use the account again, choose “Sign in”.
 
 The spec's reason: the account signed this device out, so the device forgets what it keeps from the account. Every other `401` on refresh only means "sign in again" and keeps the data; see [Sync](sync.md#tokens).
 
@@ -72,7 +72,7 @@ The spec's reason: the account signed this device out, so the device forgets wha
 
 Both first end the session with `POST /v1/auth/logout` when one is open, ignoring errors: offline, the session stays on the server until it expires or another device signs this one out.
 
-- **Remove everything** runs `erase_device(app, "disconnected")` as above, and the first screen says: "MorphGate removed everything it kept on this device. Your vaults are still in {email}: sign in under “I have an account” to get them back." Unsynced changes are lost.
+- **Remove everything** runs `erase_device(app, "disconnected")` as above, and the first screen says: "MorphGate removed everything it kept on this device. Your vaults are still in {email}: choose “Sign in” to get them back." Unsynced changes are lost.
 - **Keep a copy** runs `disable_sync()`: it deletes the sync settings and token, the team vaults and organizations (they belong to the team on the server) and tombstones, and marks every remaining item unsynced (`rev` 0, dirty) with every vault's `head_rev` back to 0. Unsynced changes stay. Turning sync on again, on any server, uploads the whole personal vault.
 
 Moving to another server: on one device **Keep a copy here**, then **Enable sync** with the new address. Other devices either remove everything and sign in on the first screen, or keep a copy and use **I have an account** in the Sync panel; their items join the account's vault with the same ids, so identical items merge and differing ones become "(conflict)" copies ([Sync](sync.md#conflicts)).
@@ -97,7 +97,7 @@ The master password and the recovery key are the account's, so with sync on the 
 | Change the master password (Security) | `vault_change_password` | `account::change_password`: checks the current password here and prepares new KDF parameters, AuthKey and wrapped keys, sends `PUT /v1/account/keys {current_auth_key, new_kdf, new_auth_key, wrapped_private_keys}`, then applies them here. The server signs the other devices out; each shows **Sign in again** and, with the new password, re-wraps its own keys (`sign_in_again`, `adopt_credentials`) |
 | New recovery key (Security) | `vault_new_recovery_code` | `account::new_recovery_key`: the same request with the password unchanged and a new `recovery {wrapped_private_keys_rk, recovery_proof}`. Nobody is signed out; the old code stops working on the server too |
 | Forgot the password, on a synced device (unlock screen) | `vault_recover` | `account::recover`: `POST /v1/account/recover {email, recovery_proof}` returns the recovery-wrapped keys and a short-lived token that only allows `PUT /v1/account/keys`; the new credentials are made here from the recovery code and sent without a current AuthKey; then the device signs in again with the new password and its own device id, without a code (recovery turns two-step verification off), and only then stores them. Every other device is signed out |
-| Forgot the password, fresh device (**I have an account**, **Forgot the master password? Use your recovery key**) | `sync_recover_sign_in` | `account::recover_and_sign_in`: the same on the server, then an ordinary sign-in with the new password ([Sync](sync.md#signing-in)) |
+| Forgot the password, fresh device (**Sign in**, **Forgot the master password? Use your recovery key**) | `sync_recover_sign_in` | `account::recover_and_sign_in`: the same on the server, then an ordinary sign-in with the new password ([Sync](sync.md#signing-in)) |
 
 A recovery code the server doesn't accept is "the sync server doesn't accept this recovery code for that account". While signed out, account changes stop at "this device is signed out of sync; sign in again (Sync panel) before changing the account". Server side: `PUT /v1/account/keys` and `POST /v1/account/recover` in `spec/openapi.yaml`, and the single-use recovery token in the [spec](../sync-crypto-spec.md#auth--devices).
 

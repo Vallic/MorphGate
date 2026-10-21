@@ -247,6 +247,8 @@ interface HostsProps {
   /** Hosts from OpenSSH's configuration (desktop). */
   onImport: () => void;
   onCloud: () => void;
+  /** Quick connect, to a host not saved (desktop, where this page is home once there are hosts). */
+  onQuickConnect?: () => void;
   /** After a change made here (several deleted, moved to a group). */
   onChanged: () => void;
   onClose: () => void;
@@ -272,6 +274,11 @@ export function HostsPage(p: HostsProps) {
       onClose={p.onClose}
       actions={
         <>
+          {p.onQuickConnect && (
+            <button type="button" className="secondary" onClick={p.onQuickConnect}>
+              Quick connect
+            </button>
+          )}
           {!mobileOs && (
             <button type="button" className="secondary" onClick={p.onImport}>
               Import…
