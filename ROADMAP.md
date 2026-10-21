@@ -45,6 +45,11 @@ xterm.js in the webview avoids writing a terminal renderer.
       with progress, cancel and replace, mkdir/rename/chmod/delete
 - [x] `mg-sync`: vault-sync/v1 client (prelogin/register/login, token rotation, pull/push)
 - [x] Sync engine in `mg-store`: paginated pull, rollback guard, conflict copies, sealed refresh token
+- [x] Item history: every write carries a version inside its signed envelope, deletions are signed, and
+      a device refuses a copy of an item older than one it has seen (servers keep the signed deletion:
+      `signed_tombstones`)
+- [ ] Strict item history on by default (refusing unversioned changes, which only apps before item history
+      send), and signed vault checkpoints for devices with no copy to compare
 - [x] Reference sync server (`server/`, axum + SQLite) with protocol + two-device e2e tests
 - [x] Desktop sync: enable from an existing vault, sign in on a fresh device, background sync, disconnect
 - [x] Password change / recovery / new recovery key while synced (server first, other devices sign in again

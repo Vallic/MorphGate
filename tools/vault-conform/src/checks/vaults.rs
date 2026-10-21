@@ -1,6 +1,6 @@
 //! Vaults and their items: create, list, push, pull, conflicts, tombstones, privacy.
 
-use mg_sync::{Error, PushItem, PushStatus};
+use mg_sync::{B64, Error, MAX_DELETION_ENVELOPE, PushItem, PushStatus};
 use reqwest::Method;
 
 use super::auth::outcome;
@@ -292,6 +292,7 @@ pub async fn run(ctx: &Ctx, r: &mut Report) {
     .await;
 
     gone_after_purge(ctx, r, &c).await;
+    signed_deletions(ctx, r, &c).await;
     events(ctx, r, &c, &vault).await;
 
     r.check(
@@ -306,6 +307,76 @@ pub async fn run(ctx: &Ctx, r: &mut Report) {
             )
         },
     )
+    .await;
+}
+
+/// A deletion's envelope (its author's signed deletion) kept and returned: where the server
+/// offers it.
+async fn signed_deletions(ctx: &Ctx, r: &mut Report, c: &mg_sync::SyncClient) {
+    const E: (&str, &str) = (
+        "POST /vaults/{vault_id}/changes",
+        "keeps a deletion's envelope (at most 1 KiB) and returns it with the tombstone",
+    );
+    if !ctx
+        .caps
+        .as_ref()
+        .is_some_and(|c| c.features.signed_tombstones)
+    {
+        r.skip(
+            G,
+            E.0,
+            E.1,
+            "the server doesn't offer features.signed_tombstones",
+        );
+        return;
+    }
+    r.check(G, E.0, E.1, async {
+        let vault = ulid();
+        c.create_vault(&vault_req(&vault)).await.map_err(shown)?;
+        let id = ulid();
+        c.push(&vault, vec![put(&id, 0, 1)]).await.map_err(shown)?;
+        let deletion = |envelope| PushItem {
+            id: id.clone(),
+            base_rev: 1,
+            deleted: true,
+            envelope: Some(envelope),
+        };
+        let mut big = envelope(2).0;
+        big.resize(MAX_DELETION_ENVELOPE + 1, 2);
+        match c.push(&vault, vec![deletion(B64(big))]).await {
+            Ok(resp) => ensure(
+                resp.results
+                    .iter()
+                    .all(|x| x.status == PushStatus::Rejected),
+                "took a deletion's envelope over 1 KiB",
+            )?,
+            Err(Error::Api {
+                status: 400 | 413, ..
+            }) => {}
+            Err(e) => return Err(shown(e)),
+        }
+        let resp = c
+            .push(&vault, vec![deletion(envelope(3))])
+            .await
+            .map_err(shown)?;
+        ensure(
+            resp.results
+                .iter()
+                .all(|x| x.status == PushStatus::Accepted),
+            format!("the deletion wasn't accepted: {:?}", resp.results),
+        )?;
+        let page = c.pull(&vault, 1, 500).await.map_err(shown)?;
+        let tomb = page
+            .items
+            .iter()
+            .find(|i| i.id == id)
+            .ok_or("the tombstone is missing")?;
+        ensure(
+            tomb.deleted && tomb.envelope == Some(envelope(3)),
+            "the tombstone came back without the deletion's envelope",
+        )?;
+        c.delete_vault(&vault).await.map_err(shown)
+    })
     .await;
 }
 

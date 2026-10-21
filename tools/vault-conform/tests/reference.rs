@@ -23,6 +23,10 @@ async fn the_reference_server_conforms() {
         .collect();
     assert!(failed.is_empty(), "{}", failed.join("\n"));
     assert!(report.passed() > 60, "{}", report.text(false));
+    // It keeps signed deletions, so that check runs.
+    assert!(report.checks.iter().any(|c| {
+        c.what.starts_with("keeps a deletion's envelope") && matches!(c.outcome, Outcome::Pass)
+    }));
     // What the reference server doesn't offer, or this run can't do, is skipped and says why.
     for c in &report.checks {
         if let Outcome::Skip(why) = &c.outcome {

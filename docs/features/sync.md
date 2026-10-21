@@ -171,7 +171,7 @@ The personal vault failing fails the round. A shared vault failing is listed and
 | `rejected`, `stale_key` | The item is re-sealed under the vault's current key and goes in the next batch |
 | `rejected`, any other code | Skipped for the rest of the round, still dirty, tried again next round. Not shown anywhere (`SyncReport.rejected`) |
 
-A deletion goes up as a tombstone (`deleted: true`, no envelope). An item deleted before it ever synced (`rev` 0) is removed locally and never sent. A read-only vault only pulls.
+A deletion goes up as a tombstone (`deleted: true`) with its signed deletion envelope ([Item history](#item-history)); servers with `signed_tombstones` keep it (for items they have), others drop it. An item deleted before it ever synced (`rev` 0) is removed locally and never sent. A read-only vault only pulls.
 
 ## Revisions and anti-rollback
 
@@ -183,7 +183,20 @@ Each vault row keeps `head_rev`, the highest server revision this device has app
 | A shared vault's item may not take the id of a live personal item (lookups go by id) | "item {id} of a shared vault has the id of one in your personal vault" |
 | A page whose `head_rev` is below the local `head_rev` | The vault fails: "the sync server sent older data (revision {remote}) than this device already has ({local}); refusing to roll back" (`SyncError::Rollback`) |
 | A pulled item no newer than the local copy | Ignored |
+| A pulled item or deletion with a version below the last one the server confirmed for it | The vault fails: "the sync server sent an older copy of item {id} (version {remote}) than this device already has (version {seen}); refusing to roll it back" (`Error::OlderItem`). Nothing from the page is applied |
 | `410` on a pull (code `gone` or none; `410 invite_expired` is something else) | The cursor goes back to 0 and the vault is pulled in full; afterwards, clean synced items the server didn't send are deleted here (`drop_unseen`). The `head_rev` check doesn't apply to this full pull; the per-item check does |
+
+## Item history
+
+Every write carries a version inside its signed envelope (`crates/mg-store/src/history.rs`, the spec's [Item history](../sync-crypto-spec.md#sync-protocol)): the time of the write in milliseconds, or one more than the highest version this device knows of the item when that is larger (`LocalVault::next_version`). Edits, conflict copies, re-seals under a rotated key (`reseal`) and deletions (`LocalVault::tombstone`, from `delete` and from moves) all take a new one. Each item row keeps `version`, the one in its envelope, and `seen_version`, the one of the last copy the server confirmed: set by `apply_remote` and by `mark_pushed`.
+
+| Pulled | Effect |
+| --- | --- |
+| A versioned copy at or above `seen_version` | Applied; `seen_version` follows it |
+| A versioned copy below it | Refused (`Error::OlderItem`, above) |
+| A copy without a version, or a deletion without a valid signed envelope (apps before item history, 0.2.0) | Applied; `seen_version` goes to 0, so the next versioned copy is taken whatever its version (its writer may not have seen the earlier ones) |
+| The same, with strict item history on (`LocalVault::set_strict_history`, off for now) | Refused when the item has a version (`Error::UnversionedItem`) |
+| An item whose row is from before item history (`seen_version` NULL) | Compared with the version in its stored envelope |
 
 ## Conflicts
 
@@ -298,7 +311,7 @@ Organization endpoints are listed in [Teams](teams.md); account and device endpo
 
 | Where | What |
 | --- | --- |
-| `crates/mg-store/src/sync.rs` (`cargo test -p mg-store`) | The engine against an in-memory server (`Fake`, two items per page): `items_flow_between_devices`, `concurrent_edits_keep_both_versions`, `edit_beats_delete_as_a_copy_and_delete_loses_to_edit`, `never_synced_deletes_are_not_uploaded`, `tampered_server_data_is_rejected_whole`, `rollback_is_refused`, `up_to_date_vaults_arent_pulled`, `a_device_with_its_own_vault_joins_an_account`, `a_shared_vault_cant_shadow_a_personal_item`, `kinds_from_newer_apps_are_kept_but_not_listed`, `token_and_config_roundtrip_and_disable`, `vaults_without_a_stored_recovery_proof_rotate_on_registration`, `adopt_requires_the_right_password_and_a_fresh_device`, and the blob tests (`session_log_blobs_upload_fetch_and_delete`, `refused_blobs_are_reported_and_retried`, `attachments_sync_and_go_with_their_host`) |
+| `crates/mg-store/src/sync.rs` (`cargo test -p mg-store`) | The engine against an in-memory server (`Fake`, two items per page): `items_flow_between_devices`, `concurrent_edits_keep_both_versions`, `edit_beats_delete_as_a_copy_and_delete_loses_to_edit`, `never_synced_deletes_are_not_uploaded`, `tampered_server_data_is_rejected_whole`, `rollback_is_refused`, `an_older_copy_of_an_item_is_refused`, `a_deleted_item_cant_be_brought_back`, `changes_from_apps_before_item_history_still_sync`, `strict_history_refuses_unversioned_changes`, `copies_from_before_item_history_keep_their_version`, `resealing_gives_a_new_version`, `deletions_sync_through_servers_that_drop_their_envelope`, `up_to_date_vaults_arent_pulled`, `a_device_with_its_own_vault_joins_an_account`, `a_shared_vault_cant_shadow_a_personal_item`, `kinds_from_newer_apps_are_kept_but_not_listed`, `token_and_config_roundtrip_and_disable`, `vaults_without_a_stored_recovery_proof_rotate_on_registration`, `adopt_requires_the_right_password_and_a_fresh_device`, and the blob tests (`session_log_blobs_upload_fetch_and_delete`, `refused_blobs_are_reported_and_retried`, `attachments_sync_and_go_with_their_host`) |
 | `crates/mg-sync/src/client.rs` | `payment_errors_say_what_to_do` |
 | `server/tests/e2e.rs`, `protocol.rs`, `account.rs` | Real vaults through the reference server over HTTP: a second device signs in and syncs, push, pull, conflicts and tombstones, refresh rotation and reuse detection, email verification and two-step verification where offered. `VAULT_SYNC_URL=https://… cargo test -p vault-sync-server --test protocol --test e2e --test account` runs them against another server |
 | `tools/vault-conform` | The `auth`, `account` and `vaults` groups check a server's side of all of this. See [Development](../development.md#conformance-suite) |

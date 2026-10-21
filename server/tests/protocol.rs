@@ -186,6 +186,43 @@ async fn push_pull_conflicts_and_tombstones() {
     let tomb = page.items.iter().find(|i| i.id == b).unwrap();
     assert!(tomb.deleted && tomb.envelope.is_none());
 
+    // A signed deletion: its envelope is kept and comes back (any key generation, at most 1 KiB).
+    let signed = ulid();
+    c.push(&vault, vec![put(&signed, 0, 5)]).await.unwrap();
+    let deletion = |base_rev, len| PushItem {
+        id: signed.clone(),
+        base_rev,
+        deleted: true,
+        envelope: Some(bytes(len, 7)),
+    };
+    let r = c.push(&vault, vec![deletion(5, 1025)]).await.unwrap();
+    assert_eq!(r.results[0].status, PushStatus::Rejected);
+    let r = c.push(&vault, vec![deletion(5, 400)]).await.unwrap();
+    assert_eq!(r.results[0].status, PushStatus::Accepted);
+    let page = c.pull(&vault, 5, 500).await.unwrap();
+    let tomb = page.items.iter().find(|i| i.id == signed).unwrap();
+    assert!(tomb.deleted);
+    assert_eq!(tomb.envelope, Some(bytes(400, 7)));
+    assert!(c.capabilities().await.unwrap().features.signed_tombstones);
+    // An item the server never had: its deletion keeps no envelope.
+    let unknown = ulid();
+    let r = c
+        .push(
+            &vault,
+            vec![PushItem {
+                id: unknown.clone(),
+                base_rev: 0,
+                deleted: true,
+                envelope: Some(bytes(400, 7)),
+            }],
+        )
+        .await
+        .unwrap();
+    assert_eq!(r.results[0].status, PushStatus::Accepted);
+    let page = c.pull(&vault, 6, 500).await.unwrap();
+    assert_eq!(page.items.len(), 1);
+    assert!(page.items[0].deleted && page.items[0].envelope.is_none());
+
     // Pagination.
     let page = c.pull(&vault, 0, 1).await.unwrap();
     assert!(page.has_more && page.items.len() == 1);
@@ -207,7 +244,7 @@ async fn push_pull_conflicts_and_tombstones() {
     assert!(r.results.iter().all(|x| x.status == PushStatus::Rejected));
 
     let v = c.list_vaults().await.unwrap();
-    assert_eq!((v.len(), v[0].head_rev, v[0].item_count), (1, 4, Some(1)));
+    assert_eq!((v.len(), v[0].head_rev, v[0].item_count), (1, 7, Some(1)));
 }
 
 #[tokio::test]

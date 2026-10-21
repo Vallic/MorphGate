@@ -10,6 +10,7 @@ mod blobs;
 mod device;
 mod error;
 pub mod export;
+mod history;
 pub mod model;
 pub mod moving;
 mod schema;

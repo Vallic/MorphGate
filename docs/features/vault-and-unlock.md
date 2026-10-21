@@ -62,7 +62,7 @@ Store-level rules that apply to every type:
 | Saving an existing item into another vault | `to put an item in another vault, copy or move it` |
 | Deleting an item others refer to | `<what> is still used by: <labels>` |
 
-Deleting leaves a tombstone (`envelope` NULL, `deleted` 1) so the deletion syncs. Deleting a host deletes its attachments; deleting a group makes what its hosts took from it their own.
+Deleting leaves a tombstone (`deleted` 1) holding the signed deletion (`{"type":"deleted","item_version":n}` in an envelope of the item) so the deletion syncs, and other devices can tell it from one a server made up ([Item history](sync.md#item-history)). Deleting a host deletes its attachments; deleting a group makes what its hosts took from it their own.
 
 ## First run
 

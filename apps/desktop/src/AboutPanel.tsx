@@ -131,7 +131,8 @@ export function AboutPanel({ update, onUpdate, onAutoCheckChanged, onClose }: Pr
                     </p>
                     <div className="actions">
                       <span className="spacer" />
-                      <button type="button" className="primary" onClick={install}>
+                      {/* Install takes the update the last finished check found. */}
+                      <button type="button" className="primary" disabled={checking} onClick={install}>
                         Install and restart
                       </button>
                     </div>
