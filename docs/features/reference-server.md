@@ -73,6 +73,7 @@ Tokens are 32 random bytes, stored as SHA-256 hashes. The `AuthKey` and the reco
 | `sharing` | No member or vault limits; `mails_invites: false` (creating an invite returns its token) |
 | `blobs` | `max_blob_bytes`, `quota_bytes`, kinds `attachment` and `session_log` |
 | `sso` | `protocols: ["oidc"]` |
+| `signed_tombstones` | `true`: a deletion's envelope (at most 1 KiB, any key generation) is kept and returned, for an item the server has |
 | `limits.tombstone_retention_days` | 90 |
 
 | Area | Endpoints (under `/v1` unless noted) |

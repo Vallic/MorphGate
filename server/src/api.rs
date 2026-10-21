@@ -221,6 +221,7 @@ async fn capabilities(State(s): State<AppState>) -> Json<Capabilities> {
             sso: Some(SsoFeatures {
                 protocols: vec!["oidc".into()],
             }),
+            signed_tombstones: true,
         },
     })
 }
@@ -915,14 +916,18 @@ async fn push(
             results.push(reject("bad_request", "item id must be a ULID"));
             continue;
         }
-        let envelope = if item.deleted {
-            None
-        } else {
-            item.envelope.map(|e| e.0)
-        };
+        // A deletion may carry its author's signed deletion: kept and returned with it.
+        let envelope = item.envelope.map(|e| e.0);
         match &envelope {
             None if !item.deleted => {
                 results.push(reject("bad_request", "envelope required"));
+                continue;
+            }
+            Some(e) if item.deleted && e.len() > MAX_DELETION_ENVELOPE => {
+                results.push(reject(
+                    "too_large",
+                    "a deletion's envelope is at most 1024 bytes",
+                ));
                 continue;
             }
             Some(e) if e.len() > MAX_ENVELOPE => {
@@ -934,7 +939,8 @@ async fn push(
                 results.push(reject("bad_request", "envelope too short"));
                 continue;
             }
-            Some(e) if e[1..17] != current_key[..] => {
+            // A deletion carries no secret: any key generation the vault had will do.
+            Some(e) if !item.deleted && e[1..17] != current_key[..] => {
                 results.push(reject(
                     "stale_key",
                     "the vault has a newer key: re-encrypt and push again",
@@ -960,6 +966,9 @@ async fn push(
                 },
             )
             .optional()?;
+        // A deletion's envelope only for an item the server has: for one it never had, it would
+        // take room that no quota counts.
+        let envelope = envelope.filter(|_| !(item.deleted && current.is_none()));
         if let Some(cur) = current.filter(|cur| cur.rev != item.base_rev) {
             results.push(PushResult {
                 id: item.id,
@@ -971,7 +980,10 @@ async fn push(
             continue;
         }
         head += 1;
-        let key_id = envelope.as_ref().map(|e| e[1..17].to_vec());
+        let key_id = envelope
+            .as_ref()
+            .filter(|_| !item.deleted)
+            .map(|e| e[1..17].to_vec());
         tx.execute(
             "INSERT INTO items (vault_id, id, rev, deleted, device_id, envelope, updated_at, author_id, key_id)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)

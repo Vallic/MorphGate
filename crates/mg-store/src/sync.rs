@@ -17,8 +17,10 @@ use rusqlite::{OptionalExtension, params};
 use ulid::Ulid;
 use zeroize::Zeroizing;
 
-use crate::vault::{Access, Unlocked, context, decrypt, envelope_key_id, now};
-use crate::{BlobKind, Error, ItemData, LocalVault, Result};
+use crate::vault::{
+    Access, Unlocked, context, decrypt, envelope_key_id, now, open_envelope, version_in,
+};
+use crate::{BlobKind, Error, ItemData, LocalVault, Result, history};
 
 /// Pseudo item id under which the refresh token is sealed (never a valid ULID, so no clash).
 const TOKEN_ID: &str = "sync:refresh-token";
@@ -90,9 +92,12 @@ pub struct Outgoing {
     pub id: String,
     pub base_rev: i64,
     pub deleted: bool,
+    /// The item, or a deletion's signed envelope (`None`: a deletion from before item history).
     pub envelope: Option<Vec<u8>>,
     /// Local `updated_at` when read; an edit during the push keeps the row dirty.
     pub updated_at: i64,
+    /// The version in `envelope` (`None`: not known).
+    pub version: Option<i64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -609,7 +614,7 @@ impl LocalVault {
             [vault],
         )?;
         let mut stmt = self.conn.prepare(
-            "SELECT id, rev, deleted, envelope, updated_at FROM items
+            "SELECT id, rev, deleted, envelope, updated_at, version FROM items
              WHERE vault_id = ?1 AND dirty = 1 ORDER BY updated_at, id LIMIT ?2",
         )?;
         let rows = stmt.query_map(params![vault, (limit + skip.len()) as i64], |r| {
@@ -619,6 +624,7 @@ impl LocalVault {
                 deleted: r.get(2)?,
                 envelope: r.get(3)?,
                 updated_at: r.get(4)?,
+                version: r.get(5)?,
             })
         })?;
         let mut out = Vec::new();
@@ -635,26 +641,47 @@ impl LocalVault {
     }
 
     /// Applies server items in one transaction; every envelope is verified (author and vault
-    /// key) before anything is written. Returns (items applied, conflicts). `cursor` advances
-    /// `head_rev` when given.
+    /// key) before anything is written, and no item goes back to an older version than this
+    /// device has seen of it. Returns (items applied, conflicts). `cursor` advances `head_rev`
+    /// when given.
     fn apply_remote(
         &mut self,
         vault: &str,
         items: &[RemoteItem],
         cursor: Option<i64>,
     ) -> Result<(usize, usize)> {
+        let strict = self.strict_history;
         let keys = self.keys.as_ref().ok_or(Error::Locked)?;
-        for r in items.iter().filter(|r| !r.deleted) {
-            let env = r
-                .envelope
-                .as_deref()
-                .ok_or_else(|| Error::Corrupt(format!("item {} has no envelope", r.id)))?;
-            decrypt(keys, vault, &r.id, env, r.author_id.as_deref())?;
+        let mut copies = Vec::with_capacity(items.len());
+        for r in items {
+            let copy = match (&r.envelope, r.deleted) {
+                (Some(env), false) => {
+                    let plain = open_envelope(keys, vault, &r.id, env, r.author_id.as_deref())?;
+                    history::read(&r.id, &plain)?
+                }
+                (None, false) => {
+                    return Err(Error::Corrupt(format!("item {} has no envelope", r.id)));
+                }
+                // A deletion is signed when it carries its author's deletion envelope; anything
+                // else counts as unsigned (as from an app before item history).
+                (Some(env), true) => open_envelope(keys, vault, &r.id, env, r.author_id.as_deref())
+                    .and_then(|plain| history::read(&r.id, &plain))
+                    .ok()
+                    .filter(|copy| copy.data.is_none())
+                    .unwrap_or(history::Copy {
+                        data: None,
+                        version: None,
+                    }),
+                (None, true) => history::Copy {
+                    data: None,
+                    version: None,
+                },
+            };
             // Items are looked up by id: a shared vault must not bring in a new one that would
             // stand in for a live item of the personal vault. Moving between vaults keeps ids (the
             // old copy becomes a tombstone, and the personal vault syncs first in every round),
             // and an id this vault already had here is no newcomer (an item moved back and forth).
-            if vault != keys.vault_id {
+            if copy.data.is_some() && vault != keys.vault_id {
                 let clash = self
                     .conn
                     .query_row(
@@ -671,68 +698,101 @@ impl LocalVault {
                     )));
                 }
             }
+            copies.push(copy);
         }
         let (mut applied, mut conflicts) = (0, 0);
         let stamp = now();
         let tx = self.conn.transaction()?;
-        for r in items {
+        for (r, copy) in items.iter().zip(copies) {
+            let deleted = copy.data.is_none();
             let local: Option<LocalRow> = tx
                 .query_row(
-                    "SELECT rev, dirty, deleted, envelope, author_id FROM items WHERE vault_id = ?1 AND id = ?2",
+                    "SELECT rev, dirty, deleted, envelope, author_id, seen_version FROM items WHERE vault_id = ?1 AND id = ?2",
                     params![vault, r.id],
-                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+                    |row| {
+                        Ok((
+                            row.get(0)?,
+                            row.get(1)?,
+                            row.get(2)?,
+                            row.get(3)?,
+                            row.get(4)?,
+                            row.get(5)?,
+                        ))
+                    },
                 )
                 .optional()?;
-            match local {
-                None if r.deleted => continue,
-                Some((rev, ..)) if rev >= r.rev => continue,
-                Some((_, true, local_deleted, local_env, local_author)) => {
-                    let local_data = match (local_deleted, local_env) {
-                        (false, Some(env)) => {
-                            Some(decrypt(keys, vault, &r.id, &env, local_author.as_deref())?)
-                        }
-                        _ => None,
-                    };
-                    let remote_data = match (&r.deleted, &r.envelope) {
-                        (false, Some(env)) => {
-                            Some(decrypt(keys, vault, &r.id, env, r.author_id.as_deref())?)
-                        }
-                        _ => None,
-                    };
-                    // The same content on both sides (say, both re-sealed it): nothing lost.
-                    let same = local_data == remote_data;
-                    if !same {
-                        conflicts += 1;
-                    }
-                    // Local edit lost against the server: keep it as a separate item.
-                    if let (false, Some(mut data)) = (same, local_data) {
-                        mark_conflict(&mut data);
-                        let copy_id = Ulid::generate().to_string();
-                        let plain = Zeroizing::new(
-                            serde_json::to_vec(&data).map_err(|e| Error::Invalid(e.to_string()))?,
-                        );
-                        let copy = envelope::seal(
-                            keys.current(vault)?,
-                            &keys.account,
-                            &context(vault, &copy_id),
-                            &plain,
-                        )?;
-                        tx.execute(
-                            "INSERT INTO items (id, vault_id, envelope, deleted, rev, dirty, updated_at)
-                             VALUES (?1, ?2, ?3, 0, 0, 1, ?4)",
-                            params![copy_id, vault, copy, stamp],
-                        )?;
-                    }
-                }
+            match &local {
+                None if deleted => continue,
+                Some((rev, ..)) if *rev >= r.rev => continue,
                 _ => {}
             }
+            if let Some((_, dirty, _, local_env, local_author, seen)) = &local {
+                // The version of the last copy the server confirmed; for a copy from before
+                // item history, the one its envelope holds (unless it has a change on top).
+                let seen = match (seen, dirty, local_env) {
+                    (Some(seen), ..) => *seen,
+                    (None, false, Some(env)) => {
+                        version_in(keys, vault, &r.id, env, local_author.as_deref())
+                    }
+                    _ => 0,
+                };
+                match copy.version {
+                    Some(v) if v < seen => {
+                        return Err(Error::OlderItem {
+                            item: r.id.clone(),
+                            seen,
+                            remote: v,
+                        });
+                    }
+                    None if strict && seen > 0 => {
+                        return Err(Error::UnversionedItem { item: r.id.clone() });
+                    }
+                    _ => {}
+                }
+            }
+            if let Some((_, true, local_deleted, local_env, local_author, _)) = local {
+                let local_data = match (local_deleted, local_env) {
+                    (false, Some(env)) => {
+                        Some(decrypt(keys, vault, &r.id, &env, local_author.as_deref())?)
+                    }
+                    _ => None,
+                };
+                // The same content on both sides (say, both re-sealed it): nothing lost.
+                let same = local_data == copy.data;
+                if !same {
+                    conflicts += 1;
+                }
+                // Local edit lost against the server: keep it as a separate item.
+                if let (false, Some(mut data)) = (same, local_data) {
+                    mark_conflict(&mut data);
+                    let copy_id = Ulid::generate().to_string();
+                    let version = history::next(0);
+                    let plain = history::plaintext(&data, version)?;
+                    let sealed = envelope::seal(
+                        keys.current(vault)?,
+                        &keys.account,
+                        &context(vault, &copy_id),
+                        &plain,
+                    )?;
+                    tx.execute(
+                        "INSERT INTO items (id, vault_id, envelope, deleted, rev, dirty, updated_at, version, seen_version)
+                         VALUES (?1, ?2, ?3, 0, 0, 1, ?4, ?5, 0)",
+                        params![copy_id, vault, sealed, stamp, version],
+                    )?;
+                }
+            }
+            // Without a version (an app before item history), the next versioned copy may be
+            // from a device that never saw the earlier ones: it starts over.
+            let version = copy.version.unwrap_or(0);
             tx.execute(
-                "INSERT INTO items (id, vault_id, envelope, deleted, rev, dirty, updated_at, author_id)
-                 VALUES (?1, ?2, ?3, ?4, ?5, 0, ?6, ?7)
+                "INSERT INTO items (id, vault_id, envelope, deleted, rev, dirty, updated_at, author_id, version, seen_version)
+                 VALUES (?1, ?2, ?3, ?4, ?5, 0, ?6, ?7, ?8, ?8)
                  ON CONFLICT (vault_id, id) DO UPDATE SET envelope = excluded.envelope, deleted = excluded.deleted,
-                     rev = excluded.rev, dirty = 0, updated_at = excluded.updated_at, author_id = excluded.author_id",
-                params![r.id, vault, if r.deleted { None } else { r.envelope.as_deref() }, r.deleted, r.rev, stamp,
-                        r.author_id.as_deref().filter(|a| vault != keys.vault_id && Some(*a) != keys.account_id.as_deref())],
+                     rev = excluded.rev, dirty = 0, updated_at = excluded.updated_at, author_id = excluded.author_id,
+                     version = excluded.version, seen_version = excluded.seen_version",
+                params![r.id, vault, if deleted { None } else { r.envelope.as_deref() }, deleted, r.rev, stamp,
+                        r.author_id.as_deref().filter(|a| vault != keys.vault_id && Some(*a) != keys.account_id.as_deref()),
+                        version],
             )?;
             applied += 1;
         }
@@ -748,10 +808,10 @@ impl LocalVault {
 
     fn mark_pushed(&mut self, vault: &str, sent: &Outgoing, rev: i64) -> Result<()> {
         self.conn.execute(
-            "UPDATE items SET rev = ?3, author_id = NULL,
+            "UPDATE items SET rev = ?3, author_id = NULL, seen_version = ?5,
                  dirty = CASE WHEN updated_at = ?4 THEN 0 ELSE 1 END
              WHERE vault_id = ?1 AND id = ?2",
-            params![vault, sent.id, rev, sent.updated_at],
+            params![vault, sent.id, rev, sent.updated_at, sent.version],
         )?;
         Ok(())
     }
@@ -776,10 +836,13 @@ impl LocalVault {
             return Ok(false);
         }
         let plain = crate::vault::open_envelope(keys, vault, id, &env, author.as_deref())?;
+        // A new version, whatever app wrote it and whatever kind it is.
+        let version = self.next_version(vault, id)?;
+        let plain = history::with_version(&plain, version)?;
         let env = envelope::seal(current, &keys.account, &context(vault, id), &plain)?;
         self.conn.execute(
-            "UPDATE items SET envelope = ?3, author_id = NULL, dirty = 1 WHERE vault_id = ?1 AND id = ?2",
-            params![vault, id, env],
+            "UPDATE items SET envelope = ?3, author_id = NULL, dirty = 1, version = ?4 WHERE vault_id = ?1 AND id = ?2",
+            params![vault, id, env, version],
         )?;
         Ok(true)
     }
@@ -881,8 +944,15 @@ fn unlocked_from((account, vault_key): (AccountKeys, VaultKey), import: AccountI
     }
 }
 
-/// `(rev, dirty, deleted, envelope, author_id)` of a local item.
-type LocalRow = (i64, bool, bool, Option<Vec<u8>>, Option<String>);
+/// `(rev, dirty, deleted, envelope, author_id, seen_version)` of a local item.
+type LocalRow = (
+    i64,
+    bool,
+    bool,
+    Option<Vec<u8>>,
+    Option<String>,
+    Option<i64>,
+);
 
 fn mark_conflict(data: &mut ItemData) {
     const SUFFIX: &str = " (conflict)";
@@ -1122,6 +1192,8 @@ mod tests {
         refuse_blobs: Mutex<Option<crate::Refusal>>,
         /// Pull requests answered.
         pulls: AtomicI64,
+        /// Drop the envelope a deletion carries, as servers from before signed deletions do.
+        drops_deletion_envelopes: std::sync::atomic::AtomicBool,
     }
 
     impl Fake {
@@ -1160,7 +1232,12 @@ mod tests {
                     },
                     _ => {
                         let rev = self.head.fetch_add(1, Ordering::SeqCst) + 1;
-                        let envelope = if o.deleted { None } else { o.envelope };
+                        let envelope =
+                            if o.deleted && self.drops_deletion_envelopes.load(Ordering::SeqCst) {
+                                None
+                            } else {
+                                o.envelope
+                            };
                         store.insert(
                             o.id.clone(),
                             RemoteItem {
@@ -1175,6 +1252,18 @@ mod tests {
                     }
                 })
                 .collect()
+        }
+
+        /// The server's copy of item `id`.
+        fn copy(&self, id: &str) -> RemoteItem {
+            self.items.lock().unwrap()[id].clone()
+        }
+
+        /// Makes `copy` the newest revision of its item: a server serving what it kept, or a
+        /// change another app pushed.
+        fn serve(&self, mut copy: RemoteItem) {
+            copy.rev = self.head.fetch_add(1, Ordering::SeqCst) + 1;
+            self.items.lock().unwrap().insert(copy.id.clone(), copy);
         }
     }
 
@@ -1960,5 +2049,343 @@ mod tests {
         ));
         b.lock();
         b.unlock(PW).unwrap();
+    }
+
+    /// What a device pushes for item `id` of its personal vault: `data` with `version`, or
+    /// without one (`None`: an app before item history), or a deletion (`data: None`), unsigned
+    /// without a version the way those apps send it.
+    fn pushed_by(
+        v: &Mutex<LocalVault>,
+        id: &str,
+        data: Option<&ItemData>,
+        version: Option<i64>,
+    ) -> RemoteItem {
+        let v = v.lock().unwrap();
+        let keys = v.unlocked().unwrap();
+        let vault = keys.vault_id.clone();
+        let plain = match (data, version) {
+            (Some(data), Some(n)) => history::plaintext(data, n).unwrap().to_vec(),
+            (Some(data), None) => serde_json::to_vec(data).unwrap(),
+            (None, Some(n)) => history::deletion(n),
+            (None, None) => Vec::new(),
+        };
+        let envelope = (!plain.is_empty()).then(|| {
+            envelope::seal(
+                keys.current(&vault).unwrap(),
+                &keys.account,
+                &context(&vault, id),
+                &plain,
+            )
+            .unwrap()
+        });
+        RemoteItem {
+            id: id.to_owned(),
+            rev: 0,
+            deleted: data.is_none(),
+            envelope,
+            author_id: None,
+        }
+    }
+
+    /// The version in this device's copy of item `id` and the last one the server confirmed.
+    fn versions(v: &Mutex<LocalVault>, id: &str) -> (Option<i64>, Option<i64>) {
+        v.lock()
+            .unwrap()
+            .conn
+            .query_row(
+                "SELECT version, seen_version FROM items WHERE id = ?1",
+                [id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap()
+    }
+
+    fn refused_as_older(r: core::result::Result<SyncReport, SyncError>) -> bool {
+        matches!(r, Err(SyncError::Store(Error::OlderItem { .. })))
+    }
+
+    /// Every write carries a version; a server serving a device an older copy than it has seen
+    /// gets refused, and the device keeps what it has.
+    #[tokio::test]
+    async fn an_older_copy_of_an_item_is_refused() {
+        let (a, b) = two_devices();
+        let server = Fake::default();
+        let id = a.lock().unwrap().upsert(None, host("db")).unwrap().id;
+        sync(&a, &server).await;
+        let first = server.copy(&id);
+        a.lock().unwrap().upsert(Some(&id), host("db2")).unwrap();
+        sync(&a, &server).await;
+        sync(&b, &server).await;
+        let (version, seen) = versions(&b, &id);
+        assert!(version.unwrap() > 1_700_000_000_000);
+        assert_eq!(version, seen);
+        assert_eq!(versions(&a, &id), (version, version), "pushed is confirmed");
+
+        let second = server.copy(&id);
+        server.serve(first);
+        assert!(refused_as_older(sync_once(&b, &server).await));
+        assert!(
+            refused_as_older(sync_once(&b, &server).await),
+            "until it stops"
+        );
+        assert_eq!(labels(&b), ["db2"]);
+        // The server serves the right copy again: sync goes on.
+        server.serve(second);
+        sync(&b, &server).await;
+        sync(&a, &server).await;
+        a.lock().unwrap().upsert(Some(&id), host("db3")).unwrap();
+        sync(&a, &server).await;
+        sync(&b, &server).await;
+        assert_eq!(labels(&b), ["db3"]);
+    }
+
+    /// A deletion is signed, with a version after the item's: replaying the item's last copy
+    /// doesn't bring it back, and a deletion the server makes up for a newer copy is refused too.
+    #[tokio::test]
+    async fn a_deleted_item_cant_be_brought_back() {
+        let (a, b) = two_devices();
+        let server = Fake::default();
+        let id = a.lock().unwrap().upsert(None, host("db")).unwrap().id;
+        sync(&a, &server).await;
+        sync(&b, &server).await;
+        let live = server.copy(&id);
+        a.lock().unwrap().delete(&id).unwrap();
+        sync(&a, &server).await;
+        let gone = server.copy(&id);
+        assert!(
+            gone.deleted && gone.envelope.is_some(),
+            "the deletion is signed"
+        );
+        sync(&b, &server).await;
+        assert!(labels(&b).is_empty());
+        assert!(versions(&b, &id).1.unwrap() > versions(&a, &id).1.unwrap() - 1);
+
+        server.serve(live);
+        assert!(refused_as_older(sync_once(&b, &server).await));
+        assert!(labels(&b).is_empty());
+
+        // The same item back (moved back, say), then the old deletion again.
+        let back = pushed_by(
+            &a,
+            &id,
+            Some(&host("db again")),
+            Some(history::next(0) + 10),
+        );
+        server.serve(back);
+        sync(&b, &server).await;
+        assert_eq!(labels(&b), ["db again"]);
+        server.serve(gone);
+        assert!(refused_as_older(sync_once(&b, &server).await));
+        assert_eq!(labels(&b), ["db again"]);
+    }
+
+    /// Apps before item history write items without a version and delete without signing:
+    /// their changes still apply, and versions carry on after them.
+    #[tokio::test]
+    async fn changes_from_apps_before_item_history_still_sync() {
+        let (a, b) = two_devices();
+        let server = Fake::default();
+        let id = a.lock().unwrap().upsert(None, host("db")).unwrap().id;
+        sync(&a, &server).await;
+        sync(&b, &server).await;
+
+        server.serve(pushed_by(&a, &id, Some(&host("db (old app)")), None));
+        sync(&b, &server).await;
+        assert_eq!(labels(&b), ["db (old app)"]);
+        assert_eq!(versions(&b, &id), (Some(0), Some(0)));
+
+        // After it, a device that never saw the earlier versions may write a lower one (its
+        // clock behind, say): it counts from there.
+        server.serve(pushed_by(&a, &id, Some(&host("db (slow clock)")), Some(5)));
+        sync(&b, &server).await;
+        assert_eq!(labels(&b), ["db (slow clock)"]);
+        server.serve(pushed_by(&a, &id, Some(&host("db (older)")), Some(4)));
+        assert!(refused_as_older(sync_once(&b, &server).await));
+
+        // B's next edit comes after all of it; A takes it.
+        server.serve(pushed_by(&a, &id, Some(&host("db (slow clock)")), Some(5)));
+        sync(&b, &server).await;
+        b.lock()
+            .unwrap()
+            .upsert(Some(&id), host("db (new app)"))
+            .unwrap();
+        sync(&b, &server).await;
+        sync(&a, &server).await;
+        assert_eq!(labels(&a), ["db (new app)"]);
+
+        server.serve(pushed_by(&a, &id, None, None));
+        sync(&a, &server).await;
+        assert!(labels(&a).is_empty(), "an unsigned deletion applies");
+    }
+
+    /// With strict item history, an item that has a version takes no unversioned change and no
+    /// unsigned deletion; items that never had a version still do.
+    #[tokio::test]
+    async fn strict_history_refuses_unversioned_changes() {
+        let (a, b) = two_devices();
+        let server = Fake::default();
+        b.lock().unwrap().set_strict_history(true);
+        let id = a.lock().unwrap().upsert(None, host("db")).unwrap().id;
+        sync(&a, &server).await;
+        sync(&b, &server).await;
+        let current = server.copy(&id);
+        let unversioned = |r: core::result::Result<SyncReport, SyncError>| {
+            matches!(r, Err(SyncError::Store(Error::UnversionedItem { .. })))
+        };
+
+        server.serve(pushed_by(&a, &id, Some(&host("db (old app)")), None));
+        assert!(unversioned(sync_once(&b, &server).await));
+        server.serve(pushed_by(&a, &id, None, None));
+        assert!(unversioned(sync_once(&b, &server).await));
+        // A deletion envelope that isn't one: a live copy, or another item's.
+        let mut fake = current.clone();
+        fake.deleted = true;
+        server.serve(fake);
+        assert!(unversioned(sync_once(&b, &server).await));
+        assert_eq!(labels(&b), ["db"]);
+        server.serve(current);
+        sync(&b, &server).await;
+
+        let old = Ulid::generate().to_string();
+        server.serve(pushed_by(&a, &old, Some(&host("from an old app")), None));
+        sync(&b, &server).await;
+        assert_eq!(labels(&b), ["db", "from an old app"]);
+        server.serve(pushed_by(&a, &old, None, None));
+        sync(&b, &server).await;
+        assert_eq!(labels(&b), ["db"]);
+    }
+
+    /// A copy stored before item history (no versions in its row) still counts with the version
+    /// its envelope holds: the next write comes after it, and nothing older is taken.
+    #[tokio::test]
+    async fn copies_from_before_item_history_keep_their_version() {
+        let (a, b) = two_devices();
+        let server = Fake::default();
+        let id = a.lock().unwrap().upsert(None, host("db")).unwrap().id;
+        sync(&a, &server).await;
+        let ahead = history::next(0) + 86_400_000;
+        server.serve(pushed_by(
+            &a,
+            &id,
+            Some(&host("db (clock ahead)")),
+            Some(ahead),
+        ));
+        sync(&b, &server).await;
+        b.lock()
+            .unwrap()
+            .conn
+            .execute("UPDATE items SET version = NULL, seen_version = NULL", [])
+            .unwrap();
+
+        server.serve(pushed_by(
+            &a,
+            &id,
+            Some(&host("db (older)")),
+            Some(ahead - 1),
+        ));
+        assert!(refused_as_older(sync_once(&b, &server).await));
+
+        server.serve(pushed_by(
+            &a,
+            &id,
+            Some(&host("db (clock ahead)")),
+            Some(ahead),
+        ));
+        sync(&b, &server).await;
+        b.lock()
+            .unwrap()
+            .conn
+            .execute("UPDATE items SET version = NULL, seen_version = NULL", [])
+            .unwrap();
+        b.lock()
+            .unwrap()
+            .upsert(Some(&id), host("db (edited)"))
+            .unwrap();
+        assert_eq!(versions(&b, &id).0, Some(ahead + 1));
+    }
+
+    /// Re-sealing under a vault's new key (finishing a rotation) is a write: a new version, the
+    /// same content.
+    #[test]
+    fn resealing_gives_a_new_version() {
+        let mut v = fast(LocalVault::open_in_memory().unwrap());
+        v.create(PW).unwrap();
+        let old = VaultKey::generate().unwrap();
+        v.conn
+            .execute(
+                "INSERT INTO vaults (id, key_id, wrapped_vault_key, created_at, personal, org_id, permission, name)
+                 VALUES ('TEAM', ?1, x'02', 1, 0, 'ORG', 'write', 'Team')",
+                [old.id().as_slice()],
+            )
+            .unwrap();
+        let ring = |keys: Vec<VaultKey>| crate::vault::Ring {
+            current: *keys.last().unwrap().id(),
+            keys,
+            access: Access::Write,
+        };
+        let new = VaultKey::generate().unwrap();
+        let (old_id, new_id) = (*old.id(), *new.id());
+        v.keys
+            .as_mut()
+            .unwrap()
+            .shared
+            .insert("TEAM".into(), ring(vec![old]));
+        let id = v.upsert_in("TEAM", None, host("db")).unwrap().id;
+        let before: i64 = v
+            .conn
+            .query_row("SELECT version FROM items WHERE id = ?1", [&id], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        v.keys
+            .as_mut()
+            .unwrap()
+            .shared
+            .get_mut("TEAM")
+            .unwrap()
+            .keys
+            .push(new);
+        v.keys
+            .as_mut()
+            .unwrap()
+            .shared
+            .get_mut("TEAM")
+            .unwrap()
+            .current = new_id;
+        assert_ne!(old_id, new_id);
+
+        assert_eq!(v.reseal_old_items("TEAM").unwrap(), 1);
+        let (env, version): (Vec<u8>, i64) = v
+            .conn
+            .query_row(
+                "SELECT envelope, version FROM items WHERE id = ?1",
+                [&id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(envelope_key_id(&env).unwrap(), new_id);
+        assert!(version > before);
+        let keys = v.unlocked().unwrap();
+        let copy =
+            history::read(&id, &open_envelope(keys, "TEAM", &id, &env, None).unwrap()).unwrap();
+        assert_eq!((copy.data, copy.version), (Some(host("db")), Some(version)));
+    }
+
+    /// A server from before signed deletions drops their envelope: deletions still sync.
+    #[tokio::test]
+    async fn deletions_sync_through_servers_that_drop_their_envelope() {
+        let (a, b) = two_devices();
+        let server = Fake::default();
+        server
+            .drops_deletion_envelopes
+            .store(true, Ordering::SeqCst);
+        let id = a.lock().unwrap().upsert(None, host("db")).unwrap().id;
+        sync(&a, &server).await;
+        sync(&b, &server).await;
+        a.lock().unwrap().delete(&id).unwrap();
+        sync(&a, &server).await;
+        assert!(server.copy(&id).envelope.is_none());
+        sync(&b, &server).await;
+        assert!(labels(&b).is_empty());
     }
 }

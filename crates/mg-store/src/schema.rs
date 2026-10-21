@@ -145,6 +145,14 @@ const MIGRATIONS: &[&str] = &[
     ",
     // v7: where to get the plan a refused blob needs.
     "ALTER TABLE blobs ADD COLUMN upgrade_url TEXT;",
+    // v8: item history. `version`: the one in the item's envelope (0: none, from an app before
+    // item history). `seen_version`: the one of the last copy the server confirmed, pulled or
+    // pushed (0: it had none). NULL in both: not read yet, from before this migration. A
+    // deletion made on this device keeps its signed envelope in `envelope`.
+    "
+    ALTER TABLE items ADD COLUMN version INTEGER;
+    ALTER TABLE items ADD COLUMN seen_version INTEGER;
+    ",
 ];
 
 pub(crate) fn migrate(conn: &mut Connection) -> Result<()> {

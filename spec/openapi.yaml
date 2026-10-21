@@ -1481,6 +1481,12 @@ components:
               description: Sign-up needs the code from POST /auth/register/start; email changes are available.
             sse: { type: boolean }
             totp: { type: boolean }
+            signed_tombstones:
+              type: boolean
+              description: >-
+                The server keeps the envelope a deletion carries (its author's signed deletion,
+                at most 1024 bytes) for an item it has, and returns it with the tombstone. Servers
+                without it ignore that envelope; clients send it either way.
             blobs:
               type: object
               description: Encrypted session logs and attachments (the paths under /vaults/{vault_id}/blobs).
@@ -1736,7 +1742,8 @@ components:
           $ref: '#/components/schemas/B64'
           description: |
             version(1) || key_id(16) || nonce(24) || ciphertext || sig(64).
-            Empty when deleted = true.
+            When deleted = true: the deletion's envelope its author pushed (`signed_tombstones`),
+            or absent.
         updated_at: { type: string, format: date-time }
         author_id:
           type: string
@@ -1764,7 +1771,12 @@ components:
           minimum: 0
           description: Omit or 0 for new items.
         deleted: { type: boolean }
-        envelope: { $ref: '#/components/schemas/B64' }
+        envelope:
+          $ref: '#/components/schemas/B64'
+          description: >-
+            Required unless deleted = true. A deletion may carry its signed deletion (at most 1024
+            bytes, any key generation of the vault; `too_large` beyond): a server with
+            `signed_tombstones` keeps it for an item it has, others ignore it.
 
     PushRequest:
       type: object
