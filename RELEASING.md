@@ -113,10 +113,13 @@ Updates are signed regardless (see above).
   - variables `APPLE_SIGNING_IDENTITY` (`Developer ID Application: Vallic d.o.o. (988D7A4F4L)`),
     `APPLE_API_KEY` (the key's ID), `APPLE_API_ISSUER` (App Store Connect → Users and Access →
     Integrations → App Store Connect API: the Issuer ID).
-  Without the API key, builds are signed but not notarized. Tauri notarizes the app; the
-  step "Notarize the DMG" then notarizes the DMG it comes in too and replaces the release's
-  copy with the stapled one. "Check the macOS signature" shows the signing authority, the
-  stapled tickets and Gatekeeper's verdict on both, and fails the build where they're wrong.
+  Without the API key, builds are signed but not notarized. Tauri notarizes the app, and "Check
+  the macOS signature" shows its signing authority, stapled ticket and Gatekeeper's verdict. The
+  DMG goes on as an artifact to the **macOS notarize** job, which notarizes it too, staples it
+  (tried five times: Apple's ticket service drops connections), checks it the same way and puts
+  it in the release in place of the one the build uploaded. That job only talks to Apple, so
+  when it fails, re-running it takes a minute or two instead of a new build. Either check fails
+  the run where something is wrong.
   A dev build with *platforms* `macos` is the cheapest check of a change to any of this. The
   certificate was made from a
   CSR on Linux (`openssl req -newkey rsa:2048`); make a new one before it expires
@@ -144,8 +147,10 @@ Updates are signed regardless (see above).
   valid after. The validation expires: its date is on the portal's Identity validation page, it
   can be renewed there from 60 days before, and Microsoft mails a reminder. Once it lapses,
   certificates stop renewing and signing stops (a new validation then needs the profile
-  replaced, same name). "Check the Windows signature" after the build shows each file's signer
-  and timestamp, and fails the build where one is missing.
+  replaced, same name). Signing needs Microsoft's timestamp server, which doesn't always
+  answer: the sign command tries each file four times, 20 seconds apart. "Check the Windows
+  signature" after the build shows each file's signer and timestamp, and fails the build where
+  one is missing.
 
 ## iOS (TestFlight)
 
@@ -153,9 +158,11 @@ The release workflow builds the iOS app and uploads it to TestFlight: on every p
 (`main`), and for a dev build when a manual run asks for *platforms* `ios` or `all`. The **iOS**
 job (macOS runner) builds and signs the .ipa; the **TestFlight** job (Linux) uploads it with
 `scripts/upload-ios.py`, through the App Store Connect API, and waits until Apple has processed
-it. The version is the one in `Cargo.toml` (a dev build's too, without its `-<build>`: App Store
-versions are at most three numbers), and the build number is the release workflow's: its run
-number plus `RUN_NUMBER_OFFSET` (above). A build uploaded by hand needs a number above
+it. Requests Apple drops are tried again, and a build App Store Connect has already (an earlier
+attempt that got through though its answer didn't) counts as uploaded, so re-running the job is
+always safe. The version is the one in `Cargo.toml` (a dev build's too, without its `-<build>`:
+App Store versions are at most three numbers), and the build number is the release workflow's:
+its run number plus `RUN_NUMBER_OFFSET` (above). A build uploaded by hand needs a number above
 the last one.
 
 It needs the secrets `IOS_CERTIFICATE` (an Apple Distribution certificate with its key, a .p12 in

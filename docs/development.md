@@ -170,7 +170,7 @@ The reference server's tests (`server/tests/`) are the older conformance suite: 
 
 All jobs run on GitHub's runners.
 
-`.github/workflows/release.yml` builds releases on pushes to `develop` and `main` ([Releasing](#releasing)): a `plan` job (channel, version, build number, platforms, the release to upload to), the desktop matrix through `tauri-action`, the Android APK, and on iOS the signed `.ipa` and a `testflight` upload job on Linux.
+`.github/workflows/release.yml` builds releases on pushes to `develop` and `main` ([Releasing](#releasing)): a `plan` job (channel, version, build number, platforms, the release to upload to), the desktop matrix through `tauri-action`, a `macos-notarize` job for the DMG, the Android APK, and on iOS the signed `.ipa` and a `testflight` upload job on Linux. The jobs that only talk to Apple are apart from the builds, so re-running a failed one doesn't build again; Windows signing retries the timestamp server inside the build ([RELEASING.md](../RELEASING.md)).
 
 ## Versioning
 

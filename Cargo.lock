@@ -3346,7 +3346,7 @@ dependencies = [
 
 [[package]]
 name = "mg-inventory"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "reqwest",
  "serde",
@@ -3359,7 +3359,7 @@ dependencies = [
 
 [[package]]
 name = "mg-presence"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "block2",
  "objc2",
@@ -3375,7 +3375,7 @@ dependencies = [
 
 [[package]]
 name = "mg-ssh"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "getrandom 0.4.3",
  "russh",
@@ -3390,7 +3390,7 @@ dependencies = [
 
 [[package]]
 name = "mg-store"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "mg-sync",
  "mg-vault",
@@ -3406,7 +3406,7 @@ dependencies = [
 
 [[package]]
 name = "mg-sync"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "base64 0.23.1",
  "reqwest",
@@ -3419,7 +3419,7 @@ dependencies = [
 
 [[package]]
 name = "mg-vault"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "argon2",
  "chacha20poly1305 0.11.0",
@@ -3434,7 +3434,7 @@ dependencies = [
 
 [[package]]
 name = "mg-vpn"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "aes",
  "aws-lc-rs",
@@ -3543,7 +3543,7 @@ dependencies = [
 
 [[package]]
 name = "morphgate-desktop"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "apple-native-keyring-store",
  "base64 0.23.1",
@@ -6987,7 +6987,7 @@ checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
 
 [[package]]
 name = "vault-conform"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "axum",
  "hmac 0.13.0",
@@ -7007,7 +7007,7 @@ dependencies = [
 
 [[package]]
 name = "vault-sync-server"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "argon2",
  "aws-lc-rs",
