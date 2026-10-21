@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/mg-vault", "crates/mg-ssh", "crates/mg-store", "crates/mg-sync", "crates/mg-vpn", "crates/mg-presence", "crates/mg-inventory", "server", "apps/desktop/src-tauri", "tools/vault-conform"]
 
 [workspace.package]
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 rust-version = "1.91"
 

@@ -440,6 +440,8 @@ try {
   await s.exec(`[...document.querySelectorAll(".sidebar-nav button")].find((b) => b.innerText.startsWith("Hosts")).click(); return true`);
   await s.wait(() => s.exec(`return document.querySelector(".panel.page h1")?.innerText === "Hosts" || null`), "the Hosts page");
   await s.clickButton("Clouds…");
+  // The page shows what to add once it has listed the sources.
+  await s.waitText("Connect Vallic Cloud", ".cloud-page", 30000);
   await s.clickButton("Connect Vallic Cloud");
   await s.waitText("WXYZ-1234", ".cloud-sign-in", 30000);
   await s.screenshot(`${shots}/vallic-sign-in.png`);
@@ -531,6 +533,7 @@ try {
   await s.exec(`[...document.querySelectorAll(".sidebar-nav button")].find((b) => b.innerText.startsWith("Hosts")).click(); return true`);
   await s.wait(() => s.exec(`return document.querySelector(".panel.page h1")?.innerText === "Hosts" || null`), "the Hosts page");
   await s.clickButton("Clouds…");
+  await s.waitText("123456789012", ".cloud-source", 30000);
   await s.exec(
     `const card = [...document.querySelectorAll(".cloud-source")].find((x) => x.innerText.includes("123456789012"));
      [...card.querySelectorAll("button")].find((b) => b.innerText === "Settings…").click(); return true`,

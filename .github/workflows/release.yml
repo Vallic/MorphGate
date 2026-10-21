@@ -241,6 +241,8 @@ jobs:
       # The signing itself authenticates from the AZURE_* variables; this
       # `az` lets the login through. And Tauri shows only the stderr of a sign command that
       # fails, while the signing library says why on stdout: sign.cmd sends it to stderr.
+      # Signing needs Microsoft's timestamp server, which doesn't always answer: sign.cmd tries
+      # four times, 20 seconds apart, rather than fail the build.
       - name: Windows signing setup
         if: runner.os == 'Windows' && vars.ARTIFACT_SIGNING_PROFILE != ''
         shell: pwsh
@@ -252,8 +254,16 @@ jobs:
           $az = "$env:RUNNER_TEMP\az-login.cmd"
           Set-Content -Path $az -Encoding ascii -Value '@call "C:\Program Files\Microsoft SDKs\Azure\CLI2\wbin\az.cmd" %* --allow-no-subscriptions'
           "AZURE_CLI_PATH=$az" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          Set-Content -Path "$env:RUNNER_TEMP\sign.cmd" -Encoding ascii `
-            -Value "@artifact-signing-cli -e $env:ENDPOINT -a $env:ACCOUNT -c $env:CERT_PROFILE -d MorphGate %* 1>&2"
+          $cli = "artifact-signing-cli -e $env:ENDPOINT -a $env:ACCOUNT -c $env:CERT_PROFILE -d MorphGate %* 1>&2"
+          Set-Content -Path "$env:RUNNER_TEMP\sign.cmd" -Encoding ascii -Value @(
+            '@echo off',
+            'for /L %%i in (1,1,4) do (',
+            "  $cli && exit /b 0",
+            '  ping -n 21 127.0.0.1 >nul',
+            ')',
+            'exit /b 1'
+          )
+          Get-Content "$env:RUNNER_TEMP\sign.cmd"
 
       - uses: actions/setup-dotnet@v6
         if: runner.os == 'Windows' && vars.ARTIFACT_SIGNING_PROFILE != ''
@@ -369,37 +379,14 @@ jobs:
           }
           if ($files.Count -lt 3 -or $bad) { Write-Error "$bad of $($files.Count) files aren't signed and timestamped"; exit 1 }
 
-      # Tauri notarizes the app; the DMG it's downloaded in is notarized here too (Apple's advice:
-      # the outermost container), stapled, and put in the release in place of the one uploaded.
-      # Updates use the .app.tar.gz, which this leaves alone.
-      - name: Notarize the DMG
-        if: runner.os == 'macOS' && env.APPLE_API_KEY != ''
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_ID: ${{ needs.plan.outputs.release_id }}
-        run: |
-          dmg=$(ls target/universal-apple-darwin/release/bundle/dmg/*.dmg | head -1)
-          status=$(xcrun notarytool submit "$dmg" --key "$APPLE_API_KEY_PATH" --key-id "$APPLE_API_KEY" \
-            --issuer "$APPLE_API_ISSUER" --wait --output-format json | jq -r .status)
-          [ "$status" = Accepted ] || { echo "::error::notarizing the DMG: $status"; exit 1; }
-          xcrun stapler staple "$dmg"
-          asset=$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets" --paginate \
-            --jq '.[] | select(.name | endswith(".dmg")) | "\(.id) \(.name)"' | head -1)
-          [ -n "$asset" ] || { echo "::error::the release has no DMG to replace"; exit 1; }
-          gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/assets/${asset%% *}"
-          gh api -X POST -H "Content-Type: application/x-apple-diskimage" \
-            "https://uploads.github.com/repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets?name=${asset#* }" \
-            --input "$dmg" --jq .browser_download_url
-
-      # The proof, in the log: signed with the Developer ID (hardened runtime, secure timestamp),
-      # notarized with the ticket stapled, and accepted by Gatekeeper as a downloaded app would be.
+      # The proof, in the log: the app signed with the Developer ID (hardened runtime, secure
+      # timestamp), notarized by Tauri with the ticket stapled, and accepted by Gatekeeper as a
+      # downloaded app would be. The DMG is the macOS notarize job's.
       - name: Check the macOS signature
         if: runner.os == 'macOS' && env.APPLE_SIGNING_IDENTITY != ''
         shell: bash
         run: |
-          bundle=target/universal-apple-darwin/release/bundle
-          app=$(ls -d "$bundle"/macos/*.app | head -1)
+          app=$(ls -d target/universal-apple-darwin/release/bundle/macos/*.app | head -1)
           codesign --verify --deep --strict --verbose=2 "$app"
           codesign -dv --verbose=4 "$app" 2>&1 | grep -E "^(Identifier|Authority|TeamIdentifier|Timestamp|CodeDirectory)"
           plutil -p "$app/Contents/Info.plist" | grep -E "CFBundleIdentifier|NSLocalNetworkUsageDescription|LSMinimumSystemVersion"
@@ -407,13 +394,76 @@ jobs:
             xcrun stapler validate "$app"
             spctl --assess --type execute --verbose=4 "$app"
           fi
-          for dmg in "$bundle"/dmg/*.dmg; do
-            codesign -dv --verbose=2 "$dmg" 2>&1 | grep -E "^Authority"
-            if [ -n "${APPLE_API_KEY:-}" ]; then
-              xcrun stapler validate "$dmg"
-              spctl --assess --type open --context context:primary-signature --verbose=4 "$dmg"
-            fi
+
+      # The DMG goes on to the macOS notarize job, as the iOS app goes on to TestFlight.
+      - uses: actions/upload-artifact@v7
+        if: runner.os == 'macOS' && env.APPLE_API_KEY != ''
+        with:
+          name: macos-dmg
+          path: target/universal-apple-darwin/release/bundle/dmg/*.dmg
+          retention-days: 7
+          if-no-files-found: error
+
+  # The DMG the app is downloaded in, notarized too (Apple's advice: the outermost container),
+  # stapled, checked and put in the release in place of the one the build uploaded. Updates use
+  # the .app.tar.gz, which this leaves alone. Apart from the build because this is the part that
+  # talks to Apple's services, which drop a connection now and then: re-running it takes a
+  # minute or two, not a new build.
+  macos-notarize:
+    name: macOS notarize
+    needs: [plan, desktop]
+    if: >-
+      needs.plan.outputs.build == 'true' && !cancelled() && vars.APPLE_API_KEY != ''
+      && contains(needs.plan.outputs.matrix, 'macos')
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: macos-dmg
+          path: ${{ runner.temp }}/dmg
+
+      - name: Notarize and staple
+        env:
+          API_KEY: ${{ vars.APPLE_API_KEY }}
+          API_ISSUER: ${{ vars.APPLE_API_ISSUER }}
+          API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: |
+          dmg=$(ls "$RUNNER_TEMP"/dmg/*.dmg | head -1)
+          key="$RUNNER_TEMP/AuthKey_$API_KEY.p8"
+          printf '%s\n' "$API_KEY_P8" > "$key"
+          status=$(xcrun notarytool submit "$dmg" --key "$key" --key-id "$API_KEY" \
+            --issuer "$API_ISSUER" --wait --output-format json | jq -r .status)
+          [ "$status" = Accepted ] || { echo "::error::notarizing the DMG: $status"; exit 1; }
+          # Stapling fetches the ticket from Apple's servers: tried a few times.
+          for i in 1 2 3 4 5; do
+            xcrun stapler staple "$dmg" && break
+            [ "$i" = 5 ] && { echo "::error::stapling the DMG failed 5 times"; exit 1; }
+            sleep $((i * 20))
           done
+
+      # The proof, in the log: signed, notarized with the ticket stapled, and accepted by
+      # Gatekeeper as a downloaded disk image would be.
+      - name: Check the DMG
+        run: |
+          dmg=$(ls "$RUNNER_TEMP"/dmg/*.dmg | head -1)
+          codesign -dv --verbose=2 "$dmg" 2>&1 | grep -E "^Authority"
+          xcrun stapler validate "$dmg"
+          spctl --assess --type open --context context:primary-signature --verbose=4 "$dmg"
+
+      - name: Put it in the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ needs.plan.outputs.release_id }}
+        run: |
+          dmg=$(ls "$RUNNER_TEMP"/dmg/*.dmg | head -1)
+          asset=$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets" --paginate \
+            --jq '.[] | select(.name | endswith(".dmg")) | "\(.id) \(.name)"' | head -1)
+          [ -n "$asset" ] || { echo "::error::the release has no DMG to replace"; exit 1; }
+          gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/assets/${asset%% *}"
+          gh api -X POST -H "Content-Type: application/x-apple-diskimage" \
+            "https://uploads.github.com/repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets?name=${asset#* }" \
+            --input "$dmg" --jq .browser_download_url
 
   android:
     name: Android
