@@ -3979,6 +3979,10 @@ button.lnamebtn:hover .lname {
   white-space: nowrap;
 }
 
+.lsub.error-text {
+  color: var(--danger);
+}
+
 .trunc {
   overflow: hidden;
   min-width: 0;
