@@ -28,7 +28,6 @@ import {
   type VaultEntry,
   type VpnView,
 } from "./api";
-import type { ConnectPrefill } from "./ConnectForm";
 import { Icon, type IconName } from "./Icon";
 import { AddFrom, Cell, Chip, Filters, IconAction, NameCell, StatusSq, Table, TextAction, Toolbar, TRow } from "./ListParts";
 import { MoveButton } from "./Move";
@@ -233,39 +232,6 @@ function HostRows({ list, things, ...p }: HostRowsProps) {
   );
 }
 
-/** Quick connect, as a bar: what's typed fills in the quick connect form. */
-function QuickBar({ onQuickConnect }: { onQuickConnect: (to?: ConnectPrefill) => void }) {
-  const [text, setText] = useState("");
-  const m = text.trim().match(/^(?:([^@\s]+)@)?(\[[^\]\s]+\]|[^:@\s]+)(?::(\d{1,5}))?$/);
-  const port = m?.[3] ? Number(m[3]) : null;
-  const to: ConnectPrefill | null = m && (port === null || (port > 0 && port < 65536)) ? { user: m[1] ?? null, host: m[2].replace(/^\[|\]$/g, ""), port, label: null } : null;
-  return (
-    <form
-      className="quick-bar"
-      onSubmit={(e) => {
-        e.preventDefault();
-        onQuickConnect(to ?? undefined);
-      }}
-    >
-      <span className="section-title">Quick connect</span>
-      <input
-        className="mono grow"
-        placeholder="user@host:port"
-        aria-label="Quick connect to user@host:port"
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-        spellCheck={false}
-        autoCapitalize="off"
-        autoComplete="off"
-      />
-      <button type="submit" className="secondary" disabled={text.trim() !== "" && !to}>
-        Connect…
-      </button>
-      <small className="hint quick-hint">Fills in quick connect, where you choose how to sign in. Nothing is saved.</small>
-    </form>
-  );
-}
-
 interface HostsProps {
   hosts: HostView[];
   groups: GroupView[];
@@ -283,8 +249,8 @@ interface HostsProps {
   /** Hosts from OpenSSH's configuration (desktop). */
   onImport: () => void;
   onCloud: () => void;
-  /** Quick connect (desktop, where this page is home once there are hosts), filled in or not. */
-  onQuickConnect?: (to?: ConnectPrefill) => void;
+  /** Quick connect (desktop, where this page is home once there are hosts). */
+  onQuickConnect?: () => void;
   /** After a change made here (several deleted, moved to a group). */
   onChanged: () => void;
   onClose: () => void;
@@ -327,6 +293,11 @@ export function HostsPage(p: HostsProps) {
               ]}
             />
           )}
+          {p.onQuickConnect && (
+            <button type="button" className="secondary" onClick={p.onQuickConnect}>
+              Quick connect
+            </button>
+          )}
           <button type="button" className="secondary" onClick={() => p.onEditGroup()}>
             New group
           </button>
@@ -336,7 +307,6 @@ export function HostsPage(p: HostsProps) {
         </>
       }
     >
-      {p.onQuickConnect && <QuickBar onQuickConnect={p.onQuickConnect} />}
       {p.hosts.length === 0 ? (
         <Empty text="No hosts yet." action="Add your first host" onAction={() => p.onEdit()} />
       ) : (
@@ -416,7 +386,7 @@ export function HostsPage(p: HostsProps) {
                 if (narrowed && members.length === 0) return null;
                 const parts = groupParts(g, p);
                 return (
-                  <section key={g.id} className="lsection">
+                  <section key={g.id} className="lsection in-group">
                     <div className="lghead">
                       <button type="button" className="lgname" onClick={() => p.onOpenGroup(g.id!)} title={`Open the group ${g.name}`}>
                         <Icon name="group" size={14} />

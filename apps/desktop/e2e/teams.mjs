@@ -158,8 +158,9 @@ try {
   await alice.wait(() => alice.exec(`return document.querySelector(".panel.page h1")?.innerText === "Acme Ops" || null`), "the team's page");
   await alice.pageTab("Vaults");
   await alice.waitText("No vaults yet", ".panel");
-  await alice.type('input[aria-label="New vault name"]', "Production");
   await alice.clickButton("New vault");
+  await alice.type('input[aria-label="Vault name"]', "Production");
+  await alice.clickButton("Create vault");
   await alice.wait(() => alice.hasText(".panel .lname", "Production"), "the new vault");
   await alice.clickButton("Invite people");
   await alice.type('input[aria-label="Emails to invite"]', bobEmail);
@@ -202,6 +203,21 @@ try {
     "Bob's confirmation",
   );
   ok("Alice compared Bob's fingerprint and confirmed him");
+  // The owner's role menu on Bob's row stays inside its column, at every width.
+  for (const w of [860, 1024, 1280, 1600]) {
+    await alice.resize(w, 800);
+    const spill = await alice.wait(
+      () =>
+        alice.exec(`const sel = document.querySelector('select[aria-label^="Role of"]');
+          if (!sel) return null;
+          const cell = sel.closest('[role="cell"]').getBoundingClientRect(), r = sel.getBoundingClientRect();
+          return String(Math.round(Math.max(r.right - cell.right, cell.left - r.left, 0)));`),
+      "Bob's role menu",
+    );
+    assert.equal(spill, "0", `the role menu spills ${spill}px out of its column at ${w}px`);
+  }
+  await alice.screenshot(`${shots}/alice-members.png`);
+  await alice.resize(1280, 800);
 
   // Alice: a host in the shared vault.
   await alice.click('button[title="New host"]');
@@ -338,9 +354,10 @@ try {
   await turnOn(alice, "Members can create vaults");
   await openTeams(bob);
   await openOrg(bob, "Acme Ops");
-  await bob.wait(() => bob.exec(`return document.querySelector('input[aria-label="New vault name"]') ? true : null`), "Bob's new-vault form");
-  await bob.type('input[aria-label="New vault name"]', "Bob's tools");
+  await bob.wait(() => bob.exec(`return [...document.querySelectorAll(".page-actions button")].some((b) => b.innerText === "New vault" && !b.disabled) || null`), "Bob's New vault");
   await bob.clickButton("New vault");
+  await bob.type('input[aria-label="Vault name"]', "Bob's tools");
+  await bob.clickButton("Create vault");
   await bob.wait(() => bob.hasText(".panel .lname", "Bob's tools"), "Bob's vault");
   assert.ok(((await rowText(bob, "Bob's tools")) ?? "").includes("Can manage"));
   ok("Alice let members create vaults; Bob made one he manages");

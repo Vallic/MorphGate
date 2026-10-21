@@ -77,7 +77,7 @@ The server can't read or delete items, so the log stays listed everywhere. Devic
 
 ## Viewing and replay
 
-The Session logs page (`SessionLogsPanel`) lists recordings from every vault, newest first, or one host's ("Session logs · *host*").
+The Session logs page (`SessionLogsPanel`) lists recordings from every vault, newest first, or one host's ("Session logs · *host*"), as a table: Session (its title and address; the name plays it), Started, Length, Recorded on (the device, "*size* printed") and State. Above it, a search (title, address, device) and menus that narrow it to one **Vault**, **Group** or **Host**, each shown when the recordings come from more than one.
 
 | Way in | Where |
 | --- | --- |
@@ -88,8 +88,8 @@ The Session logs page (`SessionLogsPanel`) lists recordings from every vault, ne
 
 | In a row | Shows or does |
 | --- | --- |
-| Title and state | **Synced** (`local`: every chunk here and uploaded), **Uploading** (a chunk pending), **On another device** (a chunk not here; fetched when played), **Not uploaded** (a chunk refused; the reason in the title) |
-| Details | Start time, length ("recording or cut short" without an end), "*size* printed", the address, "recorded on *device*" |
+| State | **Synced** (`local`: every chunk here and uploaded), **Uploading** (a chunk pending), **On another device** (a chunk not here; fetched when played), **Not uploaded** (a chunk refused; the reason in the title) |
+| Length | "recording or cut short" without an end |
 | **Play** ("Opening…") | Assembles the cast (`session_log_cast`) and opens the player |
 | **Save .cast** | `session_log_save`: Downloads (on iOS, Files › MorphGate) as `title-<first 10 characters of the id>.cast`; characters other than letters, digits, `-` and `.` become `-`, and `-2`, `-3`… avoid overwriting |
 | **Delete**, then **Really delete?** | Deletes the item; its chunks go here and, at the next sync, on the server |

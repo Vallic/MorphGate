@@ -182,6 +182,10 @@ type View =
 /** Views that fill the workspace: with no session open, the tab bar makes room for them too. */
 const PAGES = new Set<View["kind"]>(["hosts", "importHosts", "importSnippets", "cloud", "groups", "groupPage", "keys", "snippets", "forwards", "vpns", "logs", "teams", "sync"]);
 
+/** Pages opened from another page (Import from Snippets, a group from Groups): closing one
+ * returns to that page, where a page opened from the sidebar replaces the one shown. */
+const SUBPAGES = new Set<View["kind"]>(["importHosts", "importSnippets", "cloud", "groupPage", "logs"]);
+
 /** Editors: opening one from another keeps the first one's way back. */
 const EDITORS = new Set<View["kind"]>(["host", "identity", "group", "key", "snippet", "forward", "vpn", "hostCa"]);
 
@@ -355,9 +359,10 @@ function Workspace({ onLock, termSettings, onSettingsChanged: loadTermSettings, 
     if (v.kind === "tab" || v.kind === "quick") setTrail([]);
     else {
       // An editor replaces an editor, a page a page: what was under the first stays the way back.
+      // A page's own pages (its import, a group) keep it as the way back.
       const editor = (k: View["kind"]) => EDITORS.has(k);
       const from = view.kind === "tab" || view.kind === "quick" ? null : editor(view.kind);
-      if (view.kind !== "quick" && from !== editor(v.kind)) setTrail((t) => [...t, view].slice(-8));
+      if (view.kind !== "quick" && (from !== editor(v.kind) || SUBPAGES.has(v.kind))) setTrail((t) => [...t, view].slice(-8));
     }
     setView(v);
   };
@@ -538,11 +543,6 @@ function Workspace({ onLock, termSettings, onSettingsChanged: loadTermSettings, 
     const t = [...tabs].reverse().find((x) => x.target.kind === "saved" && x.target.hostId === h.id);
     if (t) open({ kind: "tab", key: t.key });
     else connectHost(h);
-  };
-  // Quick connect, filled in from the Hosts page's bar.
-  const quickConnect = (to?: ConnectPrefill) => {
-    if (to) setLinked({ n: (linked?.n ?? 0) + 1, connect: to });
-    open({ kind: "quick" });
   };
 
   const busy = (id: string, on: boolean) =>
@@ -858,7 +858,7 @@ function Workspace({ onLock, termSettings, onSettingsChanged: loadTermSettings, 
         />
       )}
       {view.kind === "logs" && (
-        <SessionLogsPanel key={view.hostId ?? "all"} hostId={view.hostId} hosts={hostList} look={deviceLook} onClose={close} />
+        <SessionLogsPanel key={view.hostId ?? "all"} hostId={view.hostId} hosts={hostList} groups={groupList} vaults={vaults} look={deviceLook} onClose={close} />
       )}
       {view.kind === "teams" && (
         <TeamsPanel
@@ -932,7 +932,7 @@ function Workspace({ onLock, termSettings, onSettingsChanged: loadTermSettings, 
           onOpenGroup={(id) => open({ kind: "groupPage", id })}
           onImport={() => open({ kind: "importHosts" })}
           onCloud={() => open({ kind: "cloud" })}
-          onQuickConnect={mobile ? undefined : quickConnect}
+          onQuickConnect={mobile ? undefined : () => open({ kind: "quick" })}
           onClose={close}
         />
       )}

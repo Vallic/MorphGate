@@ -269,6 +269,7 @@ function OrgView({ org, vaults, personalKeys, fingerprint, me, onBack, onClose, 
   // The member whose fingerprint is being compared (to confirm them, or certify them again).
   const [confirming, setConfirming] = useState<string | null>(null);
   const [inviting, setInviting] = useState(false);
+  const [newVault, setNewVault] = useState(false);
   // Plans enforced and no usable plan (usable as the server counts it: a trial, an active plan or
   // its grace period): nothing in the team changes until it has one. Removing people,
   // transferring and deleting the team stay possible.
@@ -323,6 +324,10 @@ function OrgView({ org, vaults, personalKeys, fingerprint, me, onBack, onClose, 
     );
   }
 
+  // The owner, on desktop, chooses or manages the team's plan in the account portal (servers with plans).
+  const portal = owner && !!details?.plansOffered && details.portal && !mobileOs;
+  const billing = () => void sync.openPortal(`/account/team/${org.id}/billing`).catch((e) => setError(errorText(e)));
+
   const published = (account: string) => memberKeys.filter((k) => k.accountId === account && k.verified).length;
   const keysRequired = details?.policies.requireMemberKeys === true;
   const keysDue = confirmed && keysRequired && hasDirectory && !!me && published(me) === 0 && personalKeys.length > 0;
@@ -355,11 +360,9 @@ function OrgView({ org, vaults, personalKeys, fingerprint, me, onBack, onClose, 
           <>
             {details?.plansOffered && (
               <PlanLine
-                org={org}
                 plan={details.plan}
                 enforced={details.plansEnforced}
                 seatsUsed={members?.filter((m) => m.status === "confirmed").length ?? null}
-                portal={owner && details.portal && !mobileOs}
               />
             )}
             {confirmed && details?.ssoOffered && <SsoLine org={org} onSignIn={onSso} />}
@@ -367,10 +370,24 @@ function OrgView({ org, vaults, personalKeys, fingerprint, me, onBack, onClose, 
         )
       }
       actions={
-        admin && (
-          <button type="button" className="primary" disabled={locked} onClick={() => setInviting(true)}>
-            Invite people
-          </button>
+        (portal || (confirmed && canCreateVaults) || admin) && (
+          <>
+            {confirmed && canCreateVaults && (
+              <button type="button" className="secondary" disabled={locked || newVault} onClick={() => (setTab("vaults"), setNewVault(true))}>
+                New vault
+              </button>
+            )}
+            {portal && (
+              <button type="button" className="secondary" onClick={billing}>
+                {details?.plan ? "Manage plan ↗" : "Choose a plan ↗"}
+              </button>
+            )}
+            {admin && (
+              <button type="button" className="primary" disabled={locked} onClick={() => setInviting(true)}>
+                Invite people
+              </button>
+            )}
+          </>
         )
       }
     >
@@ -435,7 +452,16 @@ function OrgView({ org, vaults, personalKeys, fingerprint, me, onBack, onClose, 
         </>
       )}
       {confirmed && tab === "vaults" && (
-        <VaultsTab vaults={vaults} members={members ?? []} orgId={org.id} canCreate={canCreateVaults} locked={locked} onChanged={changed} />
+        <VaultsTab
+          vaults={vaults}
+          members={members ?? []}
+          orgId={org.id}
+          canCreate={canCreateVaults}
+          creating={newVault && !locked}
+          onCreating={setNewVault}
+          locked={locked}
+          onChanged={changed}
+        />
       )}
       {confirmed && tab === "keys" && (
         <fieldset className="plain" disabled={locked}>
@@ -629,6 +655,8 @@ function VaultsTab({
   members,
   orgId,
   canCreate,
+  creating,
+  onCreating,
   locked,
   onChanged,
 }: {
@@ -636,6 +664,9 @@ function VaultsTab({
   members: MemberView[];
   orgId: string;
   canCreate: boolean;
+  /** New vault (the page's action) opened its bar. */
+  creating: boolean;
+  onCreating: (on: boolean) => void;
   locked: boolean;
   onChanged: () => void;
 }) {
@@ -655,13 +686,9 @@ function VaultsTab({
   const rows = [...shared, ...vaults.filter((v) => v.directory)];
   return (
     <>
-      {canCreate && (
-        <fieldset className="plain" disabled={locked}>
-          <NewVault orgId={orgId} onCreated={onChanged} />
-        </fieldset>
-      )}
-      {shared.length === 0 && (
-        <p className="hint">{canCreate ? "No vaults yet. Create one, then give members access." : "You can't open any of its vaults yet."}</p>
+      {creating && <NewVault orgId={orgId} onCreated={() => (onCreating(false), onChanged())} onCancel={() => onCreating(false)} />}
+      {shared.length === 0 && !creating && (
+        <p className="hint">{canCreate ? "No vaults yet. Create one (New vault), then give members access." : "You can't open any of its vaults yet."}</p>
       )}
       {rows.length > 0 && (
         <Table cols="minmax(170px, 1.4fr) 60px 100px 110px 140px" label="Vaults" head={["Vault", "Items", "You can", "Key"]}>
@@ -755,7 +782,7 @@ function MembersTab({ org, members, invites, published, keysRequired, admin, own
 
   return (
     <>
-      <Table cols="minmax(170px, 1.8fr) 90px 110px 90px 130px" label="Members" head={["Member", "Role", "Keys", "SSH keys"]}>
+      <Table cols="minmax(160px, 1.8fr) 104px 110px 90px 130px" label="Members" head={["Member", "Role", "Keys", "SSH keys"]}>
         {members.map((m, i) => {
           const canRemove = !m.me && m.role !== "owner" && admin && (m.role === "member" || owner);
           const n = published(m.accountId);
@@ -798,7 +825,7 @@ function MembersTab({ org, members, invites, published, keysRequired, admin, own
                 <Cell>
                   {owner && !m.me && m.status === "confirmed" && m.role !== "owner" ? (
                     <select
-                      className="compact"
+                      className="cell-select"
                       value={m.role}
                       disabled={busy || locked}
                       aria-label={`Role of ${m.email}`}
@@ -1604,7 +1631,8 @@ function AccessEditor({ vault, members, locked, onChanged }: { vault: VaultEntry
   );
 }
 
-function NewVault({ orgId, onCreated }: { orgId: string; onCreated: () => void }) {
+/** New vault, as a bar (like New team): its name, Create vault or Cancel. */
+function NewVault({ orgId, onCreated, onCancel }: { orgId: string; onCreated: () => void; onCancel: () => void }) {
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -1619,14 +1647,17 @@ function NewVault({ orgId, onCreated }: { orgId: string; onCreated: () => void }
     );
   };
   return (
-    <form className="stack" onSubmit={submit}>
-      <div className="row">
-        <input className="grow" value={name} onChange={(e) => setName(e.target.value)} placeholder="Staging" aria-label="New vault name" />
-        <button type="submit" className="secondary" disabled={!name.trim() || busy}>
-          New vault
-        </button>
-      </div>
-      {error && <p className="error">{error}</p>}
+    <form className="quick-bar" onSubmit={submit}>
+      <span className="section-title">New vault</span>
+      <input className="grow" value={name} onChange={(e) => setName(e.target.value)} placeholder="Staging" aria-label="Vault name" autoFocus />
+      <button type="button" className="quiet" onClick={onCancel}>
+        Cancel
+      </button>
+      <button type="submit" className="secondary" disabled={!name.trim() || busy}>
+        Create vault
+      </button>
+      <small className="hint quick-hint">Then give members access to it (Access, on its row).</small>
+      {error && <p className="error quick-hint">{error}</p>}
     </form>
   );
 }
@@ -1634,37 +1665,9 @@ function NewVault({ orgId, onCreated }: { orgId: string; onCreated: () => void }
 const day = (iso: string | null) => (iso ? dateText(iso) : "");
 
 /** The organization's plan (hosted servers), and what it means for its vaults. */
-function PlanLine({
-  org,
-  plan,
-  enforced,
-  seatsUsed,
-  portal,
-}: {
-  org: OrgInfo;
-  plan: OrgPlan | null;
-  enforced: boolean;
-  seatsUsed: number | null;
-  /** The owner can open the team's billing page. */
-  portal: boolean;
-}) {
-  const [error, setError] = useState("");
-  // The team's Billing tab in the account portal, signed in.
-  const billing = () => sync.openPortal(`/account/team/${org.id}/billing`).catch((e) => setError(errorText(e)));
+function PlanLine({ plan, enforced, seatsUsed }: { plan: OrgPlan | null; enforced: boolean; seatsUsed: number | null }) {
   if (!plan) {
-    return (
-      <div className="row access-row plan-line">
-        <p className={`grow ${enforced ? "warn" : "hint"}`}>
-          {enforced ? "No plan: shared vaults can be read but not changed until the team has a plan." : "No plan"}
-        </p>
-        {portal && (
-          <button type="button" className="secondary small-button" onClick={billing}>
-            Choose a plan ↗
-          </button>
-        )}
-        {error && <p className="error">{error}</p>}
-      </div>
-    );
+    return <p className={`plan-line ${enforced ? "warn" : "hint"}`}>{enforced ? "No plan: shared vaults can be read but not changed until the team has a plan." : "No plan"}</p>;
   }
   const name = plan.plan.charAt(0).toUpperCase() + plan.plan.slice(1);
   const seats = plan.seats != null ? ` · ${seatsUsed ?? "?"} of ${plan.seats} seats used` : "";
@@ -1684,17 +1687,7 @@ function PlanLine({
         return [`${name} plan${plan.expiresAt ? `, renews ${day(plan.expiresAt)}` : ""}${seats}`, "hint"];
     }
   })();
-  return (
-    <div className="row access-row plan-line">
-      <p className={`grow ${tone}`}>{text}</p>
-      {portal && (
-        <button type="button" className="secondary small-button" onClick={billing}>
-          Manage plan ↗
-        </button>
-      )}
-      {error && <p className="error">{error}</p>}
-    </div>
-  );
+  return <p className={`plan-line ${tone}`}>{text}</p>;
 }
 
 /** The organization's identity provider, and whether this device is signed in there. */

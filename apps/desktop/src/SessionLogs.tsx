@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { Terminal } from "@xterm/xterm";
-import { errorText, openLink, sessionLogs, type HostView, type SessionLogView } from "./api";
+import { errorText, openLink, sessionLogs, type GroupView, type HostView, type SessionLogView, type VaultEntry } from "./api";
 import { DEFAULT_FONT, xtermTheme } from "./themes";
 import type { TerminalLook } from "./TerminalView";
 import { Page } from "./Page";
+import { Cell, Chip, NameCell, Table, TextAction, Toolbar, TRow } from "./ListParts";
+import { useSelection } from "./Selection";
 import { mobileOs } from "./mobile/useMobile";
 
 /** Pauses longer than this play as this long. */
@@ -192,17 +194,46 @@ interface Props {
   /** Only this host's logs. */
   hostId?: string;
   hosts: HostView[];
+  groups: GroupView[];
+  vaults: VaultEntry[];
   look: TerminalLook;
   onClose: () => void;
 }
 
-export function SessionLogsPanel({ hostId, hosts, look, onClose }: Props) {
+const STATE_CHIPS: Record<SessionLogView["state"], "connected" | "idle" | "failed"> = {
+  local: "connected",
+  uploading: "idle",
+  remote: "idle",
+  failed: "failed",
+};
+
+/** A filter as a menu: "all", or one of its options. Only when there's more than one to choose. */
+function FilterSelect({ label, all, value, onChange, options }: { label: string; all: string; value: string; onChange: (v: string) => void; options: [string, string][] }) {
+  if (options.length < 2 && !value) return null;
+  return (
+    <select className={`filter-select ${value ? "on" : ""}`} aria-label={label} value={value} onChange={(e) => onChange(e.target.value)}>
+      <option value="">{all}</option>
+      {options.map(([id, name]) => (
+        <option key={id} value={id}>
+          {name}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+export function SessionLogsPanel({ hostId, hosts, groups, vaults, look, onClose }: Props) {
   const [logs, setLogs] = useState<SessionLogView[] | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [playing, setPlaying] = useState<{ id: string; cast: Cast } | null>(null);
   const [loading, setLoading] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
+  const [vaultF, setVaultF] = useState("");
+  const [groupF, setGroupF] = useState("");
+  const [hostF, setHostF] = useState("");
+  const sel = useSelection();
   const host = hosts.find((h) => h.id === hostId);
 
   const load = useCallback(() => {
@@ -232,7 +263,23 @@ export function SessionLogsPanel({ hostId, hosts, look, onClose }: Props) {
       () => (setDeleting(null), playing?.id === id && setPlaying(null), load()),
       (e) => setError(errorText(e)),
     );
-  const failed = logs?.filter((l) => l.state === "failed") ?? [];
+  const all = logs ?? [];
+  const failed = all.filter((l) => l.state === "failed");
+  const groupOf = (l: SessionLogView) => hosts.find((h) => h.id === l.hostId)?.groupId ?? null;
+  // What the filters offer: the vaults, groups and hosts the recordings are from.
+  const seen = <T,>(ids: (T | null)[]) => new Set(ids.filter((x): x is T => x !== null));
+  const vaultIds = seen(all.map((l) => l.vaultId));
+  const groupIds = seen(all.map(groupOf));
+  const hostIds = seen(all.map((l) => l.hostId));
+  const q = query.trim().toLowerCase();
+  const shown = all.filter(
+    (l) =>
+      (!q || [l.title, l.address, l.device].some((t) => t.toLowerCase().includes(q))) &&
+      (!vaultF || l.vaultId === vaultF) &&
+      (!groupF || groupOf(l) === groupF) &&
+      (!hostF || l.hostId === hostF),
+  );
+  const narrowed = !!q || !!vaultF || !!groupF || !!hostF;
 
   return (
     <Page
@@ -240,62 +287,111 @@ export function SessionLogsPanel({ hostId, hosts, look, onClose }: Props) {
       lead="Recorded sessions are encrypted with their vault's key and synced like the rest of it. Turn recording on per host, in the host editor."
       onClose={onClose}
     >
-        {error && <p className="error">{error}</p>}
-        {notice && <p className="ok">{notice}</p>}
-        {failed.length > 0 && (
-          <div className="notice-box row align-center">
-            <p className="warn grow">
-              {failed.length === 1 ? "A recording wasn't" : `${failed.length} recordings weren't`} uploaded: {failed[0].problem}
-              {failed[0].upgradeUrl && ". They stay on this device until the team is on that plan, then go up with the next try."}
-            </p>
-            {failed[0].upgradeUrl && !mobileOs && (
-              <button type="button" className="secondary small-button" onClick={() => void openLink(failed[0].upgradeUrl!).catch((e) => setError(errorText(e)))}>
-                Upgrade
-              </button>
-            )}
-            <button type="button" className="secondary small-button" onClick={() => void sessionLogs.retry().then(load)}>
-              Try again
+      {error && <p className="error">{error}</p>}
+      {notice && <p className="ok">{notice}</p>}
+      {failed.length > 0 && (
+        <div className="notice-box row align-center">
+          <p className="warn grow">
+            {failed.length === 1 ? "A recording wasn't" : `${failed.length} recordings weren't`} uploaded: {failed[0].problem}
+            {failed[0].upgradeUrl && ". They stay on this device until the team is on that plan, then go up with the next try."}
+          </p>
+          {failed[0].upgradeUrl && !mobileOs && (
+            <button type="button" className="secondary small-button" onClick={() => void openLink(failed[0].upgradeUrl!).catch((e) => setError(errorText(e)))}>
+              Upgrade
             </button>
-          </div>
-        )}
-        {playing && <SessionPlayer cast={playing.cast} look={look} onClose={() => setPlaying(null)} onSave={() => void save(playing.id)} />}
-        {logs === null && !error && <p className="hint">Loading…</p>}
-        {logs?.length === 0 && <p className="hint">No recordings yet.</p>}
-        {logs && logs.length > 0 && (
-          <ul className="device-list">
-            {logs.map((l) => (
-              <li key={l.id} className={playing?.id === l.id ? "current" : ""}>
-                <div>
-                  <strong>{l.title}</strong>
-                  <span className={`kind-badge ${l.state === "failed" ? "danger" : ""}`} title={l.problem ?? undefined}>
-                    {STATE_NAMES[l.state]}
-                  </span>
-                  <small>
-                    {when(l.startedAt)} · {length(l)} · {size(l.outputBytes)} printed
-                  </small>
-                  <small className="mono">
-                    {l.address} · recorded on {l.device}
-                  </small>
-                </div>
-                <button type="button" className="primary small-button" disabled={loading !== null} onClick={() => play(l.id)}>
-                  {loading === l.id ? "Opening…" : "Play"}
-                </button>
-                <button type="button" className="secondary small-button" onClick={() => void save(l.id)}>
-                  Save .cast
-                </button>
-                {deleting === l.id ? (
-                  <button type="button" className="danger small-button" onClick={() => void remove(l.id)}>
-                    Really delete?
-                  </button>
-                ) : (
-                  <button type="button" className="ghost-danger small-button" onClick={() => setDeleting(l.id)}>
-                    Delete
-                  </button>
+          )}
+          <button type="button" className="secondary small-button" onClick={() => void sessionLogs.retry().then(load)}>
+            Try again
+          </button>
+        </div>
+      )}
+      {playing && <SessionPlayer cast={playing.cast} look={look} onClose={() => setPlaying(null)} onSave={() => void save(playing.id)} />}
+      {logs === null && !error && <p className="hint">Loading…</p>}
+      {logs?.length === 0 && <p className="hint">No recordings yet.</p>}
+      {all.length > 0 && (
+        <>
+          <Toolbar
+            query={query}
+            setQuery={setQuery}
+            placeholder="Search by host, address or device"
+            label="Search session logs"
+            sel={sel}
+            any={false}
+            filters={
+              <div className="filters" role="group" aria-label="Show">
+                <FilterSelect
+                  label="Vault"
+                  all="Every vault"
+                  value={vaultF}
+                  onChange={setVaultF}
+                  options={vaults.filter((v) => vaultIds.has(v.id)).map((v) => [v.id, v.label])}
+                />
+                <FilterSelect
+                  label="Group"
+                  all="Every group"
+                  value={groupF}
+                  onChange={setGroupF}
+                  options={groups.filter((g) => g.id && groupIds.has(g.id)).map((g) => [g.id!, g.name])}
+                />
+                {!hostId && (
+                  <FilterSelect
+                    label="Host"
+                    all="Every host"
+                    value={hostF}
+                    onChange={setHostF}
+                    options={hosts.filter((h) => hostIds.has(h.id)).map((h) => [h.id, h.label])}
+                  />
                 )}
-              </li>
-            ))}
-          </ul>
-        )}
+              </div>
+            }
+          />
+          {shown.length === 0 ? (
+            <p className="hint page-pad">No recordings match{q ? ` “${query}”` : narrowed ? " these filters" : ""}.</p>
+          ) : (
+            <Table
+              cols="minmax(170px, 1.5fr) minmax(130px, 1fr) 70px minmax(110px, 1fr) 130px 150px"
+              label="Session logs"
+              head={["Session", "Started", "Length", "Recorded on", "State"]}
+            >
+              {shown.map((l, i) => (
+                <TRow
+                  key={l.id}
+                  index={i}
+                  className={playing?.id === l.id ? "current" : undefined}
+                  actions={
+                    <>
+                      <TextAction onClick={() => play(l.id)}>{loading === l.id ? "Opening…" : "Play"}</TextAction>
+                      <TextAction onClick={() => void save(l.id)}>Save .cast</TextAction>
+                      {deleting === l.id ? (
+                        <button type="button" className="text-action danger" onClick={() => void remove(l.id)}>
+                          Really delete?
+                        </button>
+                      ) : (
+                        <button type="button" className="text-action danger" onClick={() => setDeleting(l.id)}>
+                          Delete
+                        </button>
+                      )}
+                    </>
+                  }
+                >
+                  <NameCell onOpen={() => play(l.id)} title={`Play ${l.title}`} name={l.title} sub={l.address} subTone="mono" />
+                  <Cell>{when(l.startedAt)}</Cell>
+                  <Cell className="num">{length(l)}</Cell>
+                  <Cell className="lstack">
+                    <span className="trunc">{l.device}</span>
+                    <span className="lsub">{size(l.outputBytes)} printed</span>
+                  </Cell>
+                  <Cell>
+                    <span title={l.problem ?? undefined}>
+                      <Chip state={STATE_CHIPS[l.state]}>{STATE_NAMES[l.state]}</Chip>
+                    </span>
+                  </Cell>
+                </TRow>
+              ))}
+            </Table>
+          )}
+        </>
+      )}
     </Page>
   );
 }

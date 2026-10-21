@@ -3762,6 +3762,33 @@ button.filter.on {
   color: var(--ink);
 }
 
+/* A filter with more choices than buttons fit (a vault, a group, a host). */
+select.filter-select {
+  width: auto;
+  max-width: 220px;
+  height: 28px;
+  padding-block: 0;
+  font-size: 12px;
+}
+
+select.filter-select.on {
+  border-color: var(--gate-ink);
+  background-color: var(--gate-soft);
+}
+
+.lrow.current {
+  background: var(--gate-soft);
+}
+
+/* A choice inside a table cell (a member's role): as wide as its column, no wider. */
+select.cell-select {
+  width: 100%;
+  min-width: 0;
+  height: 30px;
+  padding-block: 0;
+  font-size: 13px;
+}
+
 .add-from {
   position: relative;
 }
@@ -4081,6 +4108,24 @@ button.text-action.warn {
   border-top: 1px solid var(--line);
 }
 
+/* A group's hosts sit in from its header, a rule down from its icon, as in the sidebar. */
+.lsection.in-group .lrow {
+  position: relative;
+}
+
+.lsection.in-group .lrow > .lfirst {
+  padding-left: 22px;
+}
+
+.lsection.in-group .lrow::before {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 18px;
+  border-left: 1px solid var(--line-strong);
+  content: "";
+}
+
 .lghead {
   display: flex;
   flex-wrap: wrap;
@@ -4279,6 +4324,10 @@ button.use-card:hover {
   .lrow > .lcell:not(.lfirst) {
     padding-left: 20px;
     font-size: 12px;
+  }
+
+  .lsection.in-group .lrow > .lcell:not(.lfirst) {
+    padding-left: 42px;
   }
 
   .lrow > .lcell:empty {

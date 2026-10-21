@@ -138,8 +138,9 @@ export async function createTeam(s, name, vault) {
   await s.wait(() => s.exec(`return document.querySelector(".panel.page h1")?.innerText === arguments[0] || null`, name), "the team's page");
   await s.pageTab("Vaults");
   await s.waitText("No vaults yet", ".panel");
-  await s.type('input[aria-label="New vault name"]', vault);
   await s.clickButton("New vault");
+  await s.type('input[aria-label="Vault name"]', vault);
+  await s.clickButton("Create vault");
   await s.wait(() => s.hasText(".panel .lname", vault), "the new vault");
   return fp;
 }

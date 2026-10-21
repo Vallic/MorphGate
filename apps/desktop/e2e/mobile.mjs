@@ -207,8 +207,8 @@ try {
   await tap('.m-sftp:not([hidden]) .m-bar button[aria-label="Back"]');
   await tapText(".m-nav button", "More");
   await tapText(".m-row", "Session logs");
-  await s.wait(() => s.hasText(".panel.page .device-list strong", "box"), "the recording in Session logs");
-  await tapText(".panel.page .device-list button", "Play");
+  await s.wait(() => s.hasText(".panel.page .lname", "box"), "the recording in Session logs");
+  await tapText(".panel.page .lrow .rowact button", "Play");
   await s.wait(
     async () => (await s.exec(`const r = document.querySelector(".player-screen .xterm-rows"); return r ? r.innerText : ""`)).includes("arrow-42") || null,
     "the recording to play",
