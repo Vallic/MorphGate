@@ -613,7 +613,7 @@ function NewAccount({
   );
 }
 
-/** `onDone(true)`: a new vault without sync (sync is offered next); `onDone(false)`: sync is on. */
+/** `onDone(true)`: a new vault without sync (sync is offered a week later); `onDone(false)`: sync is on. */
 export function SetupScreen({ onDone, erased }: { onDone: (created: boolean) => void; erased?: Erased | null }) {
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");

@@ -73,7 +73,7 @@ import { GroupPage, GroupsPage, HostsPage, KeysPage, SnippetsPage, TunnelsPage, 
 import { MoveContext } from "./Move";
 import { Sidebar, type LiveState, type PageKind } from "./Sidebar";
 import { SnippetPanel } from "./SnippetPanel";
-import { SyncOffer, SyncPanel } from "./SyncPanel";
+import { SyncOffer, syncOfferTime, SyncPanel } from "./SyncPanel";
 import { VpnPanel } from "./VpnPanel";
 import { SecurityPanel } from "./SecurityPanel";
 import { TeamsPanel } from "./TeamsPanel";
@@ -96,8 +96,6 @@ export function App() {
   const loadTermSettings = useCallback(() => void appearanceApi.settings().then(setTermSettings, () => {}), []);
   useEffect(loadTermSettings, [loadTermSettings]);
   const appTheme = useAppTheme(termSettings?.appTheme ?? "dark");
-  // A vault created just now (not joined through sync): offer sync once.
-  const [created, setCreated] = useState(false);
 
   useEffect(() => {
     vault.status().then(setStatus, (e) => setFatal(errorText(e)));
@@ -105,13 +103,13 @@ export function App() {
   // Signed out by its sync account, or disconnected and cleared: back to the start, saying why.
   const [erased, setErased] = useState<Erased | null>(null);
   useEffect(() => {
-    const off = listen<Erased>("device-erased", (e) => (setErased(e.payload), setCreated(false), setStatus("uninitialized"), loadTermSettings()));
+    const off = listen<Erased>("device-erased", (e) => (setErased(e.payload), setStatus("uninitialized"), loadTermSettings()));
     return () => void off.then((f) => f());
   }, [loadTermSettings]);
 
   if (fatal) return <div className="gate"><p className="error">{fatal}</p></div>;
   if (status === null) return <div className="gate" />;
-  if (status === "uninitialized") return <SetupScreen erased={erased} onDone={(fresh) => (setErased(null), setCreated(fresh), setStatus("unlocked"))} />;
+  if (status === "uninitialized") return <SetupScreen erased={erased} onDone={(fresh) => (setErased(null), fresh ? syncOfferTime.schedule() : syncOfferTime.forget(), setStatus("unlocked"))} />;
   if (status === "locked") return <UnlockScreen onUnlocked={() => setStatus("unlocked")} />;
   return (
     <Workspace
@@ -119,7 +117,6 @@ export function App() {
       termSettings={termSettings}
       onSettingsChanged={loadTermSettings}
       appTheme={appTheme}
-      offerSync={created}
     />
   );
 }
@@ -249,11 +246,9 @@ interface WorkspaceProps {
   onSettingsChanged: () => void;
   /** The app theme in effect. */
   appTheme: "dark" | "light";
-  /** The vault was just created: offer to turn sync on. */
-  offerSync: boolean;
 }
 
-function Workspace({ onLock, termSettings, onSettingsChanged: loadTermSettings, appTheme, offerSync }: WorkspaceProps) {
+function Workspace({ onLock, termSettings, onSettingsChanged: loadTermSettings, appTheme }: WorkspaceProps) {
   const [hostList, setHosts] = useState<HostView[]>([]);
   const [identityList, setIdentities] = useState<IdentityView[]>([]);
   const [hostCaList, setHostCas] = useState<HostCaView[]>([]);
@@ -387,7 +382,12 @@ function Workspace({ onLock, termSettings, onSettingsChanged: loadTermSettings, 
   useEffect(() => {
     if (linked && !["teams", "quick", "connect"].includes(view.kind)) setLinked(null);
   }, [view.kind]);
-  const [offering, setOffering] = useState(offerSync);
+  // A week after a vault was created without sync, sync is offered (once).
+  const [offering, setOffering] = useState(syncOfferTime.due);
+  // Sync turned on another way (Sync in the sidebar, an invite): no offer any more.
+  useEffect(() => {
+    if (syncStatus?.enabled) syncOfferTime.forget();
+  }, [syncStatus?.enabled]);
   const [prompts, setPrompts] = useState<HostKeyPrompt[]>([]);
   // A security key waiting for a touch to sign in.
   const [touch, setTouch] = useState<SecurityKeyTouch | null>(null);
@@ -1076,6 +1076,7 @@ function Workspace({ onLock, termSettings, onSettingsChanged: loadTermSettings, 
           later={mobile ? "More › Sync" : "Sync, at the bottom of the sidebar"}
           onDone={(enabled) => {
             setOffering(false);
+            syncOfferTime.forget();
             if (enabled) void syncApi.status().then(setSyncStatus).then(refresh);
           }}
         />

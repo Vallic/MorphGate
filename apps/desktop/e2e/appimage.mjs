@@ -9,7 +9,7 @@ import { appendFileSync, chmodSync, copyFileSync, existsSync, mkdirSync, mkdtemp
 import { basename, dirname } from "node:path";
 import { createHash, createHmac, generateKeyPairSync } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { createVault, openAbout, session } from "./webdriver.mjs";
+import { createVault, openAbout, reload, session } from "./webdriver.mjs";
 
 const [app, shots, feed, key, port, user, version, next] = process.argv.slice(2);
 
@@ -86,6 +86,21 @@ try {
   await s.screenshot(`${shots}/weak-password.png`);
   await createVault(s, PASSWORD, shots);
   ok("refused a guessable master password, saying why; created a vault with a strong one");
+
+  // Sync isn't offered with the new vault (the first screen had New account and Sign in), but a
+  // week on, once.
+  const offered = () => s.exec(`return !!document.querySelector("dialog.sync-offer")`);
+  await new Promise((r) => setTimeout(r, 1500));
+  assert.equal(await offered(), false, "sync offered with the new vault");
+  await reload(s, { weekLater: true });
+  await s.wait(() => s.exec(`return document.querySelector("dialog.sync-offer[open]") ? true : null`), "the offer to turn sync on");
+  await s.screenshot(`${shots}/sync-offer.png`);
+  await s.exec(`[...document.querySelectorAll("dialog.sync-offer button")].find((b) => b.innerText === "Not now").click(); return true`);
+  await s.wait(() => s.exec(`return document.querySelector("dialog.sync-offer") ? null : true`), "the offer to close");
+  await reload(s, { weekLater: true });
+  await new Promise((r) => setTimeout(r, 1500));
+  assert.equal(await offered(), false, "sync offered again after Not now");
+  ok("sync is offered a week after the vault was created, not with it, and once");
 
   // Quick connect with a key file; the new host key is trusted once.
   await quickConnect(s);

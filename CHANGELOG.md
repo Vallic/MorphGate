@@ -11,6 +11,8 @@ prompt. Write them for users.
   address filled in, and once your account exists Teams opens with the invite. You can also paste
   an invite there (Joining a team?). An invite opened while sync is off opens as soon as you turn
   sync on: no need to open the link again.
+- A new vault no longer asks at once whether to turn on sync (the first screen offers New account
+  and Sign in). If sync is still off a week later, MorphGate asks once.
 - MorphGate can suggest a strong master password: five random words, wherever you set one.
 - With saved hosts, MorphGate opens on your Hosts page, with Quick connect beside New host.
 - Hosts, groups, keys, snippets, tunnels and VPNs are tables you can search and filter, each row's

@@ -500,9 +500,6 @@ export async function createVaultKeepingKey(s, password = PASSWORD) {
   await s.click("label.check input");
   await s.exec(`[...document.querySelectorAll("button.primary")].find((b) => !b.disabled).click(); return true`);
   await s.wait(() => s.exec(`return document.querySelector("button.brand, .m-home") ? true : null`), "the workspace", 30000);
-  await s.wait(() => s.exec(`return document.querySelector("dialog.sync-offer[open]") ? true : null`), "the offer to turn sync on");
-  await s.exec(`[...document.querySelectorAll("dialog.sync-offer button")].find((b) => b.innerText === "Not now").click(); return true`);
-  await s.wait(() => s.exec(`return document.querySelector("dialog.sync-offer") ? null : true`), "the offer to close");
   return key;
 }
 
