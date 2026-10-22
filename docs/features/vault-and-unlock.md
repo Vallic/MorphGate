@@ -49,7 +49,7 @@ Each item's plaintext is an `ItemData`, JSON with a `type` tag (`model.rs`, `SCH
 | `vpn` | VPN profiles | [VPN](vpn.md) |
 | `session_log` | A recorded session, its chunks in blobs | [Session logs](session-logs.md) |
 | `terminal_theme` | Imported color schemes | [Appearance](appearance.md) |
-| `cloud_source` | A cloud account whose machines become hosts | [Cloud sources](cloud-sources.md) |
+| `cloud_source` | A cloud account or feed whose machines become hosts | [Cloud sources](cloud-sources.md) |
 | `member_key` | A member's SSH public key, in an organization's directory vault | [Teams](teams.md) |
 
 Store-level rules that apply to every type:

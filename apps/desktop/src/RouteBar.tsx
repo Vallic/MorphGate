@@ -22,7 +22,7 @@ interface Props {
   onFiles?: () => void;
   snippets: SnippetView[];
   /** Paste a snippet into this session, or run it. */
-  onSend: (body: string, run: boolean) => void;
+  onSend: (snippet: SnippetView, run: boolean) => void;
   onNewSnippet: () => void;
   /** The session is recorded into the vault. */
   recording?: boolean;
@@ -152,12 +152,17 @@ export function RouteBar({ target, status, hosts, vpns, onFiles, snippets, onSen
           Recording
         </button>
       )}
-      {pinned && (
+      {host?.source?.listedBy && (
+        <span className="pinned-key" title={`Its host key is one ${host.source.listedBy} lists for it: another would be refused`}>
+          key listed by {host.source.listedBy}
+        </span>
+      )}
+      {pinned && !host?.source?.listedBy && (
         <span className="pinned-key mono" title={`Host key pinned on first connect: ${pinned.algorithm} ${pinned.fingerprint}`}>
           {keyType(pinned.algorithm)} {shortFingerprint(pinned.fingerprint)}
         </span>
       )}
-      {!pinned && certifiedBy && (
+      {!pinned && certifiedBy && !host?.source?.listedBy && (
         <span className="pinned-key" title={`Its host certificate is signed by ${certifiedBy}, a host CA trusted for it`}>
           certified by {certifiedBy}
         </span>
@@ -265,7 +270,7 @@ function SnippetMenu({
 }: {
   snippets: SnippetView[];
   connected: boolean;
-  onSend: (body: string, run: boolean) => void;
+  onSend: (snippet: SnippetView, run: boolean) => void;
   onNew: () => void;
   /** Broadcasting: snippets go to this many panes (0: just this one). */
   all: number;
@@ -273,9 +278,9 @@ function SnippetMenu({
   const [open, setOpen] = useState(false);
   const ref = useDismiss(open, setOpen);
 
-  const send = (body: string, run: boolean) => {
+  const send = (snippet: SnippetView, run: boolean) => {
     setOpen(false);
-    onSend(body, run);
+    onSend(snippet, run);
   };
 
   return (
@@ -296,12 +301,12 @@ function SnippetMenu({
                 className="menu-item"
                 disabled={!connected}
                 title={`Paste into the session: ${s.body}`}
-                onClick={() => send(s.body, false)}
+                onClick={() => send(s, false)}
               >
                 <span className="menu-title">{s.name}</span>
                 <span className="menu-sub mono">{s.body.split("\n")[0]}</span>
               </button>
-              <button type="button" className="menu-run" disabled={!connected} title="Run it" aria-label={`Run ${s.name}`} onClick={() => send(s.body, true)}>
+              <button type="button" className="menu-run" disabled={!connected} title="Run it" aria-label={`Run ${s.name}`} onClick={() => send(s, true)}>
                 Run
               </button>
             </div>

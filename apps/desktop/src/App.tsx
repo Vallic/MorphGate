@@ -10,6 +10,7 @@ import {
   hostCas as hostCasApi,
   keys as keysApi,
   snippets as snippetsApi,
+  cloud as cloudApi,
   forwards as forwardsApi,
   device as deviceApi,
   sync as syncApi,
@@ -54,6 +55,7 @@ import { HostEditor } from "./HostEditor";
 import { GroupEditor, IdentityEditor } from "./Identities";
 import { HostCaPanel } from "./HostCaPanel";
 import { HostKeyChangedDialog, HostKeyDialog } from "./HostKeyDialog";
+import { SnippetCheckDialog } from "./SnippetCheck";
 import { RouteBar } from "./RouteBar";
 import { addPane, dividers, holds, moveDivider, panes, rects, removePane, type Divider, type Rect, type Split } from "./splits";
 import { SessionLogsPanel } from "./SessionLogs";
@@ -169,7 +171,7 @@ type View =
   /** Hosts from OpenSSH's configuration. */
   | { kind: "importHosts" }
   | { kind: "importSnippets" }
-  | { kind: "cloud" }
+  | { kind: "cloud"; add?: "feed" }
   | { kind: "groups" }
   /** One group and everything in it. */
   | { kind: "groupPage"; id: string }
@@ -390,6 +392,8 @@ function Workspace({ onLock, termSettings, onSettingsChanged: loadTermSettings, 
   // A security key waiting for a touch to sign in.
   const [touch, setTouch] = useState<SecurityKeyTouch | null>(null);
   const [changedKeys, setChangedKeys] = useState<ChangedHostKey[]>([]);
+  // A feed's snippet that changed since this device last sent it, waiting for a yes.
+  const [checking, setChecking] = useState<{ snippet: SnippetView; run: boolean; go: () => void } | null>(null);
   const [vpnPrompts, setVpnPrompts] = useState<VpnPrompt[]>([]);
   const [autoLock, setAutoLock] = useState(0);
   useIdleLock(autoLock, onLock);
@@ -432,6 +436,32 @@ function Workspace({ onLock, termSettings, onSettingsChanged: loadTermSettings, 
       setLoadError(errorText(e));
     }
   }, []);
+
+  // Feeds refresh themselves on desktops: once the first sync since unlocking has brought what
+  // other devices refreshed (at once without sync; after 20 s at the latest), then every 15
+  // minutes. The backend skips a feed refreshed on any device in the last 10.
+  const feedsRan = useRef(false);
+  const feedsSyncAt = useRef<number | null | undefined>(undefined);
+  const refreshFeeds = useCallback(() => {
+    feedsRan.current = true;
+    // What it changed shows at once (the lists otherwise follow only a sync).
+    void cloudApi.autoRefresh().then((n) => n > 0 && void refresh(), () => {});
+  }, [refresh]);
+  useEffect(() => {
+    if (mobileOs) return;
+    const first = window.setTimeout(() => feedsRan.current || refreshFeeds(), 20_000);
+    const every = window.setInterval(refreshFeeds, 15 * 60_000);
+    return () => (window.clearTimeout(first), window.clearInterval(every));
+  }, [refreshFeeds]);
+  useEffect(() => {
+    if (mobileOs || feedsRan.current || !syncStatus) return;
+    const syncing = syncStatus.enabled && !syncStatus.signedOut;
+    if (feedsSyncAt.current === undefined) {
+      feedsSyncAt.current = syncStatus.lastSyncAt;
+      if (syncing) return;
+    }
+    if (!syncing || (!syncStatus.syncing && syncStatus.lastSyncAt !== feedsSyncAt.current)) refreshFeeds();
+  }, [syncStatus, refreshFeeds]);
 
   // After a move, the editor in front shows the item where it went (a copy has a new id).
   const moves = useMemo(
@@ -675,7 +705,20 @@ function Workspace({ onLock, termSettings, onSettingsChanged: loadTermSettings, 
     if (view.kind !== "tab" || view.key !== key) open({ kind: "tab", key });
   };
 
-  const sendSnippet = (body: string, run: boolean) => sendTarget && sendTo(sendTarget.key, body, run);
+  /** What this device sent of a feed's snippet: a later change of it asks first. */
+  const markSent = (id: string) =>
+    void snippetsApi.sent(id).then(
+      () => setSnippets((all) => all.map((x) => (x.id === id ? { ...x, changed: false } : x))),
+      () => {},
+    );
+  /** Sends a snippet (`go`), asking first where its feed changed it since this device last did. */
+  const guardSnippet = (snippet: SnippetView | undefined, run: boolean, go: () => void) => {
+    if (snippet?.source && snippet.changed) return setChecking({ snippet, run, go });
+    go();
+    if (snippet?.source) markSent(snippet.id);
+  };
+  const sendSnippet = (body: string, run: boolean, snippet?: SnippetView) =>
+    sendTarget && guardSnippet(snippet, run, () => sendTo(sendTarget.key, body, run));
 
   const hostOf = (t: Tab) => (t.target.kind === "saved" ? hostList.find((h) => h.id === (t.target as { hostId: string }).hostId) : undefined);
   const current = tabs.find((t) => t.key === activeTab);
@@ -931,13 +974,15 @@ function Workspace({ onLock, termSettings, onSettingsChanged: loadTermSettings, 
           onEditGroup={(id) => open({ kind: "group", id })}
           onOpenGroup={(id) => open({ kind: "groupPage", id })}
           onImport={() => open({ kind: "importHosts" })}
-          onCloud={() => open({ kind: "cloud" })}
+          onCloud={(add) => open({ kind: "cloud", add })}
           onQuickConnect={mobile ? undefined : () => open({ kind: "quick" })}
           onClose={close}
         />
       )}
       {view.kind === "importHosts" && <ImportHostsPage vaults={vaults} onImported={() => void refresh()} onClose={close} />}
-      {view.kind === "cloud" && <CloudPage vaults={vaults} keys={keyList} hosts={hostList} onChanged={() => void refresh()} onClose={close} />}
+      {view.kind === "cloud" && (
+        <CloudPage key={view.add ?? "clouds"} vaults={vaults} keys={keyList} hosts={hostList} adding={view.add} onChanged={() => void refresh()} onClose={close} />
+      )}
       {(view.kind === "groups" || (view.kind === "groupPage" && !groupList.some((g) => g.id === view.id))) && (
         <GroupsPage onChanged={() => void refresh()}
           groups={groupList}
@@ -1056,6 +1101,19 @@ function Workspace({ onLock, termSettings, onSettingsChanged: loadTermSettings, 
         </div>
       )}
       {prompts[0] && <HostKeyDialog key={prompts[0].promptId} prompt={prompts[0]} onAnswer={(a) => answer(prompts[0], a)} />}
+      {checking && (
+        <SnippetCheckDialog
+          key={checking.snippet.id}
+          snippet={checking.snippet}
+          run={checking.run}
+          onAnswer={(send) => {
+            setChecking(null);
+            if (!send) return;
+            checking.go();
+            markSent(checking.snippet.id);
+          }}
+        />
+      )}
       {askPassword && (
         <PasswordDialog
           title={`Password for ${askPassword.host.user}@${askPassword.host.hostname}`}
@@ -1119,7 +1177,7 @@ function Workspace({ onLock, termSettings, onSettingsChanged: loadTermSettings, 
           onTotp={() => open({ kind: "sync", totp: true })}
           onSso={setSsoFor}
           onApproval={setApprovalFor}
-          onSend={sendTo}
+          onSend={(key, body, run, snippet) => guardSnippet(snippet, run, () => sendTo(key, body, run))}
           onKey={(key, k) => controls.current.get(key)?.key(k)}
           onCtrl={(key, on, used) => controls.current.get(key)?.ctrl(on, used)}
         />
@@ -1232,10 +1290,12 @@ function Workspace({ onLock, termSettings, onSettingsChanged: loadTermSettings, 
               vpns={vpnList}
               onFiles={currentHost && (() => connectHost(currentHost, undefined, "sftp"))}
               snippets={snippetList}
-              onSend={(body, run) =>
-                currentSplit?.broadcast
-                  ? panes(currentSplit.layout).forEach((k) => tabs.find((t) => t.key === k)?.status === "connected" && sendTo(k, body, run, false))
-                  : sendTo(current.key, body, run)
+              onSend={(snippet, run) =>
+                guardSnippet(snippet, run, () =>
+                  currentSplit?.broadcast
+                    ? panes(currentSplit.layout).forEach((k) => tabs.find((t) => t.key === k)?.status === "connected" && sendTo(k, snippet.body, run, false))
+                    : sendTo(current.key, snippet.body, run),
+                )
               }
               onSplit={splitWith}
               broadcast={currentSplit ? { on: currentSplit.broadcast, panes: panes(currentSplit.layout).length } : null}

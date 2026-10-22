@@ -527,6 +527,8 @@ pub fn hosts_of(project: &str, env: &Environment, t: &SshTarget) -> Vec<Inventor
         state: None,
         key_name: None,
         via: None,
+        host_keys: Vec::new(),
+        tags: Vec::new(),
     };
     // The front: a host of its own where a plain login goes on to another machine (`jump_to`),
     // else the environment's own host.

@@ -3155,6 +3155,28 @@ dialog.modal.approval {
   width: min(520px, calc(100% - 32px));
 }
 
+/* A feed's snippet that changed since it was last sent from this device. */
+dialog.modal.snippet-check {
+  width: min(560px, calc(100% - 32px));
+}
+
+dialog.modal.snippet-check .snippet-body {
+  max-height: 240px;
+  margin: 0 0 16px;
+  padding: 10px 12px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-s);
+  background: var(--bg);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* A feed's address on its source card. */
+.cloud-source .cloud-url {
+  overflow-wrap: anywhere;
+}
+
 /* Field headings that aren't labels (a choice, a list). */
 .field-label {
   color: var(--muted);

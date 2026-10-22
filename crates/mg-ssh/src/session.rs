@@ -29,6 +29,8 @@ pub struct ConnectOptions {
     pub jumps: Vec<Hop>,
     /// How the last jump host carries the target: a command it runs (see [`Hop::via_command`]).
     pub via_command: Option<String>,
+    /// The target's host keys, where its feed lists them (see [`Hop::listed_keys`]).
+    pub listed_keys: Option<crate::ListedKeys>,
     /// Opens the first hop's TCP connection (e.g. through a per-host VPN); `None` = the OS.
     pub dialer: Option<Arc<dyn crate::Dialer>>,
     /// Forward this agent to the server (OpenSSH `ForwardAgent`): programs there can sign with
@@ -81,6 +83,7 @@ impl Session {
             user: opts.user,
             auth: opts.auth,
             via_command: opts.via_command,
+            listed_keys: opts.listed_keys,
         };
         let conn = Connection::open(
             target,

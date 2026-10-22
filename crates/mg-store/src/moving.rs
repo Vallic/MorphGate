@@ -198,6 +198,16 @@ fn relink(
             auth: auth(i.auth)?,
             ..i
         }),
+        // Kept by its feed where that goes too; else an ordinary snippet there.
+        ItemData::Snippet(sn) => ItemData::Snippet(crate::Snippet {
+            source: sn.source.and_then(|src| {
+                map.get(&src.source_ref).map(|to| crate::SnippetSource {
+                    source_ref: to.clone(),
+                    ..src
+                })
+            }),
+            ..sn
+        }),
         ItemData::HostGroup(g) => ItemData::HostGroup(crate::HostGroup {
             identity_ref: optional(g.identity_ref)?,
             jump_ref: optional(g.jump_ref)?,

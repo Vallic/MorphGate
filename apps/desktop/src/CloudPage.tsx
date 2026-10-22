@@ -11,6 +11,7 @@ import {
   type CloudRefresh,
   type CloudSource,
   type DeviceAuth,
+  type FeedInput,
   type HostView,
   type KeyView,
   type SourceSettings,
@@ -31,8 +32,15 @@ function ago(seconds: number, now = Date.now() / 1000) {
   return dateText(seconds * 1000);
 }
 
-const refreshed = (r: CloudRefresh) =>
-  [r.added && `${plural(r.added, "host")} added`, r.updated && `${r.updated} updated`, r.gone && `${r.gone} gone from the cloud`]
+const refreshed = (r: CloudRefresh, feed: boolean) =>
+  [
+    r.added && `${plural(r.added, "host")} added`,
+    r.updated && `${r.updated} updated`,
+    r.gone && `${r.gone} gone from the ${feed ? "feed" : "cloud"}`,
+    r.snippetsAdded && `${plural(r.snippetsAdded, "snippet")} added`,
+    r.snippetsUpdated && `${plural(r.snippetsUpdated, "snippet")} changed`,
+    r.snippetsRemoved && `${plural(r.snippetsRemoved, "snippet")} removed`,
+  ]
     .filter(Boolean)
     .join(", ") || "Nothing changed";
 
@@ -42,14 +50,17 @@ interface Note {
   skipped?: string[];
   withoutAddress?: string[];
   couldNot?: string[];
+  /** A feed's entries left out (what `couldNot` holds for a cloud). */
+  feed?: boolean;
 }
 
-const noteOf = (sourceId: string, r: CloudRefresh): Note => ({
+const noteOf = (sourceId: string, r: CloudRefresh, feed = false): Note => ({
   sourceId,
-  text: refreshed(r),
+  text: refreshed(r, feed),
   skipped: r.withoutShell,
   withoutAddress: r.withoutAddress,
   couldNot: r.skipped,
+  feed,
 });
 
 /** A sign-in in progress: the code, the page to type it at, until it's approved. */
@@ -228,6 +239,85 @@ function SettingsForm({
   );
 }
 
+/** A feed's name, address and token, for adding one or changing it. */
+function FeedForm({
+  source,
+  keys,
+  vaultId,
+  busy,
+  submit,
+  onSubmit,
+  onCancel,
+}: {
+  source?: CloudSource;
+  keys: KeyView[];
+  vaultId: string;
+  busy: boolean;
+  submit: string;
+  onSubmit: (input: FeedInput, keyId: string | null) => void;
+  onCancel: () => void;
+}) {
+  const [label, setLabel] = useState(source?.label ?? "");
+  const [url, setUrl] = useState(source?.url ?? "");
+  const [token, setToken] = useState("");
+  const [keyId, setKeyId] = useState("");
+  const vaultKeys = keys.filter((k) => k.vaultId === vaultId);
+  const valid = /^https:\/\/\S+$|^http:\/\/(localhost|127\.0\.0\.1|\[::1\])([:/]\S*)?$/.test(url.trim()) && (!!source || token.trim() !== "");
+  return (
+    <form
+      className="stack cloud-settings"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (valid) onSubmit({ label: label.trim() || null, url: url.trim(), token: token.trim() || null }, keyId || null);
+      }}
+    >
+      <label>
+        <span>Address</span>
+        <input className="mono" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://ops.example.com/morphgate.json" spellCheck={false} autoFocus={!source} />
+      </label>
+      <label>
+        <span>Token</span>
+        <input
+          type="password"
+          className="mono"
+          value={token}
+          onChange={(e) => setToken(e.target.value)}
+          placeholder={source ? `Leave empty to keep it (${source.tokenEnd ?? "…"})` : "Sent as Authorization: Bearer"}
+          autoComplete="off"
+          spellCheck={false}
+        />
+        <small className="hint">Kept in the vault, so every device that can open it refreshes the feed. Use a token that only reads the feed.</small>
+      </label>
+      <label>
+        <span>Name (optional)</span>
+        <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="What the feed calls itself" />
+      </label>
+      {!source && (
+        <label>
+          <span>Its hosts sign in with</span>
+          <select value={keyId} onChange={(e) => setKeyId(e.target.value)}>
+            <option value="">The SSH agent</option>
+            {vaultKeys.map((k) => (
+              <option key={k.id} value={k.id}>
+                {k.label} ({k.algorithm.replace(/^ssh-/, "")})
+              </option>
+            ))}
+          </select>
+          <small className="hint">A host the feed gives a key name signs in with the vault's key of that name.</small>
+        </label>
+      )}
+      <div className="row">
+        <button type="submit" className="primary" disabled={busy || !valid}>
+          {busy ? "Reading…" : submit}
+        </button>
+        <button type="button" className="link" onClick={onCancel}>
+          Cancel
+        </button>
+      </div>
+    </form>
+  );
+}
+
 /** Clouds: their machines and environments as hosts, kept in step. Vallic Cloud signs in on each
  * device (a code typed in the browser); AWS, Google Cloud and Azure list with their CLI on this
  * device. The hosts sync like any others. */
@@ -235,12 +325,15 @@ export function CloudPage({
   vaults,
   keys,
   hosts,
+  adding: addingFirst,
   onChanged,
   onClose,
 }: {
   vaults: VaultEntry[];
   keys: KeyView[];
   hosts: HostView[];
+  /** Opened to add this (Add from… → Feed URL…). */
+  adding?: CloudProvider;
   onChanged: () => void;
   onClose: () => void;
 }) {
@@ -251,7 +344,7 @@ export function CloudPage({
   const [note, setNote] = useState<Note | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [removing, setRemoving] = useState<string | null>(null);
-  const [adding, setAdding] = useState<CloudProvider | null>(null);
+  const [adding, setAdding] = useState<CloudProvider | null>(addingFirst ?? null);
   const [editing, setEditing] = useState<string | null>(null);
   // The poll of the sign-in on screen (a new sign-in or Cancel ends it).
   const polling = useRef(0);
@@ -307,6 +400,16 @@ export function CloudPage({
     );
   };
 
+  const addFeed = (input: FeedInput, keyId: string | null) => {
+    setBusy("adding");
+    setError("");
+    setNote(null);
+    cloud.addFeed(input, { vaultId, keyId }).then(
+      (r) => (setBusy(null), setAdding(null), setNote(noteOf(r.source.id, r.refresh, true)), load(), onChanged()),
+      (e) => (setBusy(null), setError(errorText(e)), load()),
+    );
+  };
+
   const add = (provider: CloudProvider, settings: SourceSettings, keyId: string | null) => {
     setBusy("adding");
     setError("");
@@ -320,7 +423,7 @@ export function CloudPage({
   return (
     <Page
       title="Clouds"
-      lead="Your clouds' machines and environments as hosts, kept in step: a refresh brings what the cloud decides, and your renames, keys and notes stay. Vallic Cloud signs in on each device; AWS, Google Cloud, Azure, Hetzner Cloud and DigitalOcean list with their own CLI on this computer."
+      lead="Your clouds' machines and environments as hosts, kept in step: a refresh brings what the cloud decides, and your renames, keys and notes stay. Vallic Cloud signs in on each device; AWS, Google Cloud, Azure, Hetzner Cloud and DigitalOcean list with their own CLI on this computer; a feed is a list of hosts and snippets your team publishes at an address."
       onClose={onClose}
     >
       <div className="stack cloud-page">
@@ -348,10 +451,13 @@ export function CloudPage({
           const vaultKeys = keys.filter((k) => k.vaultId === s.vaultId);
           const key = vaultKeys.find((k) => k.id === s.keyId);
           const vallic = s.provider === "vallic";
+          const feed = s.provider === "feed";
           const provider = PROVIDERS[s.provider]?.name ?? s.provider;
           const how = vallic
             ? null
-            : [
+            : feed
+              ? `${s.url ?? ""} · token ${s.tokenEnd ?? "…"}`
+              : [
                 s.profile && `${s.provider === "aws" ? "profile" : "context"} ${s.profile}`,
                 s.scopes.length
                   ? s.scopes.join(", ")
@@ -384,12 +490,13 @@ export function CloudPage({
                     {s.account && `${s.account} · `}
                     {plural(s.hosts, "host")}
                     {s.gone > 0 && ` (${s.gone} gone)`}
+                    {s.snippets > 0 && ` · ${plural(s.snippets, "snippet")}`}
                     {s.refreshedAt > 0 && ` · refreshed ${ago(s.refreshedAt)}`}
                   </p>
-                  {how && <p className="hint">{how}</p>}
+                  {how && <p className={`hint ${feed ? "mono cloud-url" : ""}`}>{how}</p>}
                 </div>
                 {s.signedIn ? (
-                  <button type="button" className="primary small-button" disabled={busy === s.id} onClick={() => act(s.id, cloud.refresh(s.id), (r) => setNote(noteOf(s.id, r as CloudRefresh)))}>
+                  <button type="button" className="primary small-button" disabled={busy === s.id} onClick={() => act(s.id, cloud.refresh(s.id), (r) => setNote(noteOf(s.id, r as CloudRefresh, feed)))}>
                     {busy === s.id ? "Refreshing…" : "Refresh"}
                   </button>
                 ) : (
@@ -407,10 +514,31 @@ export function CloudPage({
                       Without {s.reach === "private" ? "a private" : "a public"} address: {note.withoutAddress.join(", ")}.
                     </p>
                   )}
-                  {note.couldNot && note.couldNot.length > 0 && <p className="hint">Couldn't list: {note.couldNot.join("; ")}</p>}
+                  {note.couldNot && note.couldNot.length > 0 && (
+                    <p className="hint">
+                      {note.feed ? "Skipped" : "Couldn't list"}: {note.couldNot.join("; ")}
+                    </p>
+                  )}
                 </>
               )}
-              {editing === s.id && !vallic ? (
+              {s.failed && note?.sourceId !== s.id && busy !== s.id && <p className="error">The last refresh failed: {s.failed}</p>}
+              {editing === s.id && feed ? (
+                <FeedForm
+                  source={s}
+                  keys={keys}
+                  vaultId={s.vaultId}
+                  busy={busy === s.id}
+                  submit="Save and refresh"
+                  onCancel={() => setEditing(null)}
+                  onSubmit={(input) =>
+                    act(
+                      s.id,
+                      cloud.feedSettings(s.id, input).then(() => cloud.refresh(s.id)),
+                      (r) => (setEditing(null), setNote(noteOf(s.id, r as CloudRefresh, true))),
+                    )
+                  }
+                />
+              ) : editing === s.id && !vallic ? (
                 <SettingsForm
                   provider={s.provider}
                   source={s}
@@ -471,10 +599,10 @@ export function CloudPage({
                 {removing === s.id ? (
                   <>
                     <button type="button" className="ghost-danger small-button" onClick={() => (setRemoving(null), act(s.id, cloud.remove(s.id, true)))}>
-                      Remove it and its hosts
+                      {s.snippets > 0 ? "Remove it, its hosts and snippets" : "Remove it and its hosts"}
                     </button>
                     <button type="button" className="secondary small-button" onClick={() => (setRemoving(null), act(s.id, cloud.remove(s.id, false)))}>
-                      Remove it, keep the hosts
+                      {s.snippets > 0 ? "Remove it, keep the hosts and snippets" : "Remove it, keep the hosts"}
                     </button>
                     <button type="button" className="link" onClick={() => setRemoving(null)}>
                       Cancel
@@ -490,7 +618,27 @@ export function CloudPage({
           );
         })}
 
-        {adding && (
+        {adding === "feed" && (
+          <section className="aside-card stack cloud-adding">
+            <h2 className="section-title">Add a feed</h2>
+            <p className="hint">
+              Hosts and snippets from a JSON document at an address, read with a token: from Terraform output, a CMDB or an internal endpoint. Its hosts and
+              snippets stay in step with it; your renames, keys, tags and notes stay yours.
+            </p>
+            <VaultField vaults={vaults} value={vaultId} onChange={setVaultId} />
+            <FeedForm
+              key={vaultId}
+              keys={keys}
+              vaultId={vaultId}
+              busy={busy === "adding"}
+              submit="Add and read the feed"
+              onCancel={() => setAdding(null)}
+              onSubmit={addFeed}
+            />
+          </section>
+        )}
+
+        {adding && adding !== "feed" && (
           <section className="aside-card stack cloud-adding">
             <h2 className="section-title">Add {PROVIDERS[adding].name}</h2>
             <VaultField vaults={vaults} value={vaultId} onChange={setVaultId} />
@@ -522,6 +670,9 @@ export function CloudPage({
                     Add {PROVIDERS[p].name}
                   </button>
                 ))}
+              <button type="button" className="secondary" onClick={() => (setError(""), setNote(null), setAdding("feed"))}>
+                Add a feed
+              </button>
             </div>
           </div>
         )}

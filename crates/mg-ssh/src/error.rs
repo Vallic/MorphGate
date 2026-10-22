@@ -26,6 +26,16 @@ pub enum Error {
         fingerprint: String,
         from: String,
     },
+    /// A key other than the ones listed for the host (by its feed).
+    #[error(
+        "the host key of {host}:{port} ({fingerprint}) isn't one {from} lists for it: refused. Someone may be intercepting the connection, or {from} doesn't know the server's new key yet"
+    )]
+    HostKeyNotListed {
+        host: String,
+        port: u16,
+        fingerprint: String,
+        from: String,
+    },
     /// A host certificate where a CA is trusted for the host, that the CA didn't sign for it.
     #[error("the host certificate of {host}:{port} isn't accepted: {why}")]
     HostCertificate {
