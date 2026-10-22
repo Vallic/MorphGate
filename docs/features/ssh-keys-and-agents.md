@@ -6,7 +6,7 @@ How a connection uses them, and host keys, are in [SSH connections](ssh-connecti
 
 ## The Keys page
 
-**Keys** in the sidebar (the count is keys plus identities) opens a page: "SSH keys stay in the vault, encrypted, and are used from there: they are never written to disk." Each key shows its label, type, a **passphrase** badge when one is saved, its vault, its fingerprint and "Used by N hosts and M identities" or "Not used yet", with **Open**. **New key** is at the top. The side column holds **Identities** ([Hosts, groups and identities](hosts-groups-identities.md)) and **Host CAs** ([SSH connections](ssh-connections.md#host-cas)).
+**Keys** in the sidebar (the count is keys plus identities) opens a page: "SSH keys stay in the vault, encrypted, and are used from there: they are never written to disk." Its tabs are **Keys**, **Identities** ([Hosts, groups and identities](hosts-groups-identities.md)) and **Host CAs** ([SSH connections](ssh-connections.md#host-cas)). Each key shows its label, type, a **passphrase** badge when one is saved, its vault, its fingerprint, "N hosts, M identities" or "Not used yet", and its certificate's state; its name (or **Open** on the row) opens it. **New key** is at the top while the Keys tab is open.
 
 ### New SSH key (`NewKey`)
 

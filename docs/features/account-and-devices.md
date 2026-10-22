@@ -57,7 +57,7 @@ A device signed out from elsewhere learns it on its next token refresh: `401 dev
 4. drops the sync session and what the last rounds learnt (`SyncState::forget`);
 5. emits `device-erased` with `{reason, email}`, and the window returns to the first screen with:
 
-> This device was signed out of {email} from another device, so MorphGate removed everything it kept here. To use the account again, sign in under “I have an account”.
+> This device was signed out of {email} from another device, so MorphGate removed everything it kept here. To use the account again, choose “Sign in”.
 
 The spec's reason: the account signed this device out, so the device forgets what it keeps from the account. Every other `401` on refresh only means "sign in again" and keeps the data; see [Sync](sync.md#tokens).
 
@@ -72,7 +72,7 @@ The spec's reason: the account signed this device out, so the device forgets wha
 
 Both first end the session with `POST /v1/auth/logout` when one is open, ignoring errors: offline, the session stays on the server until it expires or another device signs this one out.
 
-- **Remove everything** runs `erase_device(app, "disconnected")` as above, and the first screen says: "MorphGate removed everything it kept on this device. Your vaults are still in {email}: sign in under “I have an account” to get them back." Unsynced changes are lost.
+- **Remove everything** runs `erase_device(app, "disconnected")` as above, and the first screen says: "MorphGate removed everything it kept on this device. Your vaults are still in {email}: choose “Sign in” to get them back." Unsynced changes are lost.
 - **Keep a copy** runs `disable_sync()`: it deletes the sync settings and token, the team vaults and organizations (they belong to the team on the server) and tombstones, and marks every remaining item unsynced (`rev` 0, dirty) with every vault's `head_rev` back to 0. Unsynced changes stay. Turning sync on again, on any server, uploads the whole personal vault.
 
 Moving to another server: on one device **Keep a copy here**, then **Enable sync** with the new address. Other devices either remove everything and sign in on the first screen, or keep a copy and use **I have an account** in the Sync panel; their items join the account's vault with the same ids, so identical items merge and differing ones become "(conflict)" copies ([Sync](sync.md#conflicts)).
@@ -97,7 +97,7 @@ The master password and the recovery key are the account's, so with sync on the 
 | Change the master password (Security) | `vault_change_password` | `account::change_password`: checks the current password here and prepares new KDF parameters, AuthKey and wrapped keys, sends `PUT /v1/account/keys {current_auth_key, new_kdf, new_auth_key, wrapped_private_keys}`, then applies them here. The server signs the other devices out; each shows **Sign in again** and, with the new password, re-wraps its own keys (`sign_in_again`, `adopt_credentials`) |
 | New recovery key (Security) | `vault_new_recovery_code` | `account::new_recovery_key`: the same request with the password unchanged and a new `recovery {wrapped_private_keys_rk, recovery_proof}`. Nobody is signed out; the old code stops working on the server too |
 | Forgot the password, on a synced device (unlock screen) | `vault_recover` | `account::recover`: `POST /v1/account/recover {email, recovery_proof}` returns the recovery-wrapped keys and a short-lived token that only allows `PUT /v1/account/keys`; the new credentials are made here from the recovery code and sent without a current AuthKey; then the device signs in again with the new password and its own device id, without a code (recovery turns two-step verification off), and only then stores them. Every other device is signed out |
-| Forgot the password, fresh device (**I have an account**, **Forgot the master password? Use your recovery key**) | `sync_recover_sign_in` | `account::recover_and_sign_in`: the same on the server, then an ordinary sign-in with the new password ([Sync](sync.md#signing-in)) |
+| Forgot the password, fresh device (**Sign in**, **Forgot the master password? Use your recovery key**) | `sync_recover_sign_in` | `account::recover_and_sign_in`: the same on the server, then an ordinary sign-in with the new password ([Sync](sync.md#signing-in)) |
 
 A recovery code the server doesn't accept is "the sync server doesn't accept this recovery code for that account". While signed out, account changes stop at "this device is signed out of sync; sign in again (Sync panel) before changing the account". Server side: `PUT /v1/account/keys` and `POST /v1/account/recover` in `spec/openapi.yaml`, and the single-use recovery token in the [spec](../sync-crypto-spec.md#auth--devices).
 
@@ -148,7 +148,17 @@ The account's other devices hear `401 account_deleted` on their next refresh (a 
 
 ## When an organization holds this device
 
-An organization can keep its vaults from a device until something is settled. Its vaults that are already here stay, unsynced edits included, and sync once it is settled; the personal vault is never affected. The shared part of each round notes the hold (`Hold` in `crates/mg-store/src/sync.rs`) from a `403 sso_required` or `403 device_approval_required` on the organization's vaults, and, with device approval on, from this device's row in `GET /v1/orgs/{org}/devices`. `SyncStatusView` carries them as `ssoRequired` and `approvalRequired`. The team side (approving others, policies) is in [Teams](teams.md#device-approval-single-sign-on-and-activity).
+An organization can keep its vaults from a device until something is settled. Its vaults that are already here stay, unsynced edits included, and sync once it is settled; the personal vault is never affected. The shared part of each round notes the hold (`Hold` in `crates/mg-store/src/sync.rs`) from a `403 totp_setup_required`, `403 sso_required` or `403 device_approval_required` on the organization's vaults, and, with device approval on, from this device's row in `GET /v1/orgs/{org}/devices`. A server leaves such vaults out of `GET /v1/vaults` without saying why, so a member who never had them would see nothing: for an organization with `require_totp` none of whose vaults is listed, the round reads `GET /v1/account` and notes the hold when `totp_enabled` is off. `SyncStatusView` carries them as `totpRequired`, `ssoRequired` and `approvalRequired`. The team side (approving others, policies) is in [Teams](teams.md#device-approval-single-sign-on-and-activity).
+
+### Two-step verification required
+
+| Where | Shows |
+| --- | --- |
+| Sidebar foot | **Turn on two-step verification**; its tooltip names the teams: "{team} requires two-step verification: its vaults open here once your account has it" |
+| Phone, hosts screen | **Turn on two-step verification** with the same line |
+| Team page | "{team} requires two-step verification: its vaults open on your devices once your account has it." and **Turn on two-step verification** |
+
+Each opens Sync with the authenticator setup started (`{kind: "sync", totp: true}`), under the same line in a notice. `sync_totp_enable` and `sync_totp_disable` start a round when they're done, so the team's vaults come, or wait, at once.
 
 ### Waiting for approval
 
@@ -214,6 +224,7 @@ All of them hold the sync lock, and those that keep the session store a rotated 
 | `server/tests/account.rs` | `signing_out_another_device` (the other device gets `DeviceRevoked`, signs in again), `a_device_updates_what_it_says_about_itself` (and can't rename another, nor to blank), `deleting_an_account_tells_its_other_devices` (`AccountDeleted`, and `DeviceRevoked` for one signed out before), `the_data_export_tells_what_the_server_keeps` |
 | `server/tests/account.rs`, `protocol.rs` | `password_change_reaches_every_device`, `recovery_on_a_synced_device_and_on_a_fresh_one`, `a_new_recovery_key_replaces_the_old_one_without_signing_anyone_out`, `password_rotation_signs_out_others_but_a_new_recovery_key_does_not`, `recovery_tokens_are_narrow_and_single_use` |
 | `server/tests/device_approval.rs` | `a_new_device_waits_for_approval` |
+| `server/tests/totp_policy.rs` | `a_team_that_requires_two_step_verification_says_so`: a proxy in front of the reference server plays the hosted service's check; a new member without it is told, gets the vault once it's on, and keeps it (told again) when it's off |
 | `crates/mg-store/src/sync.rs`, `vault.rs` | `token_and_config_roundtrip_and_disable` (what **Keep a copy here** leaves), `erase_leaves_a_first_run_device` |
 | `apps/desktop/e2e/teams.mjs` | Bob signs his second device out from his first: it erases itself, the first screen says why, and signing in brings his vault back; a new device waits for approval, is denied, then approved from Bob's first device; Alice signs in to her team's identity provider from **Sign in to {team}**; **Download your data**; **Delete account…** sends an owner to Teams, deletes Bob's account, and his second device says the account was deleted |
 

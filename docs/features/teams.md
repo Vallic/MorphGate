@@ -65,34 +65,41 @@ Certificates bind keys to accounts and grant nothing; access stays with the serv
 
 Every verified key is pinned in `pinned_keys` with the email. A known account whose keys change is a hard error, never a prompt: "the keys of {email} changed; they must be removed and invited again". Members who don't verify go to `Trust.unverified`; the member list says "Keys not verified yet" and nothing is sealed to them ("can't verify that member's keys").
 
+## The pages
+
+**Teams** (`TeamsPanel`) lists the teams this account is in as a table: Team, You are (its role, or "Joined" until an admin confirms it), Vaults you open, and Needs you, from what this device knows: "Turn on two-step verification", "Sign in with single sign-on", "This device waits for approval" (or "This device was denied"), "{n} devices to approve", "Publish your SSH keys", "Rotate a vault's key"; "An admin confirms you next" while waiting. **New team** is the page's primary action. Under the list: **Join with an invite** and **Your fingerprint**.
+
+A team's page (`OrgView`) has the plan and single sign-on lines under its name; its actions are **New vault** (for those who may create vaults), **Choose a plan ↗** / **Manage plan ↗** (the owner, on desktop, on a server with plans) and **Invite people** for owners and admins (its primary action); then **Needs you** above its tabs: members to confirm (**Confirm {name}…**) or certify again (**Verify…**), devices waiting (**Approve**, **Deny**), vaults whose key should be rotated (**Rotate key**), two-step verification the team requires, and the SSH keys it asks members to publish (**Publish a key**). Tabs: **Members** (members, then the invites not accepted yet: Role, Keys ("Verified", "To confirm", "Not verified"), SSH keys; then **Devices waiting**), **Vaults** (Items, You can, Key; **Access**, **Rotate key**), **Your SSH keys**, and for owners and admins **Settings** and **Activity**. Members see **Vaults** first. Before an admin confirms you, the page only says so, with your fingerprint and **Leave**. Lists are the tables of the other pages (`ListParts.tsx`).
+
 ## Creating a team
 
-**New organization** (placeholder "Acme Ops"), **Create**. `create_org()` picks a ULID, creates the organization, checks that the server put this account's real keys at the root of the owner chain, pins the root and creates the member key directory (if that fails, the next sync does it). A server with plans (such as morphgate.com) may refuse with `402 team_limit`, whose `limit` is how many teams an account may own without a plan. The app then says "you own {n} teams without a plan: choose a plan for one of them, or delete one, before creating another" and, on desktop, offers **Choose a plan ↗** (the account portal at `/account`); iOS and Android builds say "…, the most you can: delete one before creating another".
+**New team** opens a bar: **Team name** (placeholder "Acme Ops"), **Create team**. `create_org()` picks a ULID, creates the organization, checks that the server put this account's real keys at the root of the owner chain, pins the root and creates the member key directory (if that fails, the next sync does it). A server with plans (such as morphgate.com) may refuse with `402 team_limit`, whose `limit` is how many teams an account may own without a plan. The app then says "you own {n} teams without a plan: choose a plan for one of them, or delete one, before creating another" and, on desktop, offers **Choose a plan ↗** (the account portal at `/account`); iOS and Android builds say "…, the most you can: delete one before creating another".
 
 ## Inviting
 
-Owners and admins see **Invites** beside the team.
+**Invite people** (owners and admins; disabled while the team is locked) opens a dialog.
 
 | Control | Does |
 | --- | --- |
-| Email field (placeholder "colleague@example.com"), **Invite** | Enabled for a well-formed address (`^[^@\s]+@[^@\s]+$`) at an allowed domain ("Invites go only to @…") |
-| **Member** / **Admin** select | Owners only; only the owner invites admins. Admin invites carry no vault grants |
-| "Vaults they get once you confirm them:" checkboxes | Members only; each ticked vault gets an access select, **Can edit** by default |
-| Pending list, **Cancel** | One row per invite with "Expires {date}" |
-| "This server doesn't email invites. Send this code to {email} (it works once, for that address, for 7 days):", **Copy code**, **Done** | When the server returned the token (`mails_invites: false`) |
-| "Invite emailed to {email}." | Otherwise |
+| **Email addresses** (placeholder "colleague@example.com, another@example.com"), **Send invite** / **Send {n} invites** | Several at once, separated by commas, semicolons or spaces; each must be well formed (`^[^@\s]+@[^@\s]+$`, else "Not an email address: …") and at an allowed domain ("Invites go only to @…: not …"). One `org_invite` per address; those refused are named, the rest are sent |
+| **Role** | Owners only ("Member: the vaults you give them", "Admin: every vault and member"); only the owner invites admins. Admin invites carry no vault grants |
+| "Vaults they get once you confirm them" checkboxes | Members only; each ticked vault gets an access select, **Can edit** by default |
+| "This server doesn't email invites. Send each person their code (it works once, for that address, for 7 days):", a code per address with **Copy code**, **Done** | When the server returned the tokens (`mails_invites: false`) |
+| "Invite emailed to {emails}." | Otherwise |
 
-An invite page on the web opens `morphgate://invite?token=…&server=…` (or `morphgate://invite/{token}`). The app opens Teams with the code looked up, after checking that sync is on (otherwise it opens Sync: "Turn on sync with the invited address first, then open the link again") and that `server` is the server this device syncs with. A link never joins by itself. See [Deep links](deep-links.md).
+Invites not accepted yet are rows of **Members**: "Invited · works until {date}", **Cancel invite**.
+
+An invite page on the web opens `morphgate://invite?token=…&server=…` (or `morphgate://invite/{token}`). The app opens Teams with the code looked up, after checking that sync is on (otherwise it opens Sync, and Teams once sync is on) and that `server` is the server this device syncs with. Opened before the app has a vault, the first screen shows the invite and offers a new account with its address ([First run](vault-and-unlock.md#first-run)). A link never joins by itself. See [Deep links](deep-links.md).
 
 ## Joining
 
 **Join with an invite**: **Invite code**, **Look up**. `preview_invite()` reads the invite and verifies its owner chain from the first link, then shows the team, the invited address, the role, the sender and the current owner's fingerprint. The person ticks **It matches the fingerprint they read to me** and chooses **Join {team}**.
 
-`accept_invite()` reads the invite again and refuses when the owner's fingerprint is no longer the one shown ("the organization's keys changed while you were looking; check the fingerprint again") or when this device already pinned another root ("this organization's root key changed"). Then it accepts and pins the root. The member is `accepted`: the list says "Waiting for an admin to confirm you", and the team page shows their own fingerprint to read out, with **Leave**.
+`accept_invite()` reads the invite again and refuses when the owner's fingerprint is no longer the one shown ("the organization's keys changed while you were looking; check the fingerprint again") or when this device already pinned another root ("this organization's root key changed"). Then it accepts and pins the root. The member is `accepted`: the Teams list says "An admin confirms you next", and the team page shows their own fingerprint to read out, with **Leave**.
 
 ## Confirming and verifying members
 
-An admin chooses **Confirm…** next to a member "Waiting for confirmation", asks them to read their fingerprint (Teams, on their device), ticks **It matches what they read to me** and chooses **Confirm {email}**. `confirm_member()`:
+An admin chooses **Confirm…** on a member marked "To confirm" (or **Confirm {name}…** in Needs you), asks them to read their fingerprint (Teams, on their device), ticks **It matches what they read to me** and chooses **Confirm {email}**. `confirm_member()`:
 
 1. syncs the organization first (`refresh()`), then refuses a member already confirmed;
 2. compares the fingerprint of the keys the server lists now with the one the admin compared ("their keys don't match the fingerprint you compared; compare again") and with any pin ("this account's keys changed");
@@ -108,17 +115,17 @@ A member certificate counts only while its signer is an owner or admin. When the
 
 | Role | In the app |
 | --- | --- |
-| Owner | Everything below, plus **Make admin** / **Make member**, invites and confirms admins, removes admins, **Ownership** (transfer, delete), **Choose a plan ↗** / **Manage plan ↗** on desktop |
+| Owner | Everything below, plus the role select on members' rows, invites and confirms admins, removes admins, **Ownership** (transfer, delete), **Choose a plan ↗** / **Manage plan ↗** on desktop |
 | Admin | Opens and manages every vault, invites members, confirms, removes members, policies, **Activity**, device decisions |
 | Member | Opens the vaults granted, publishes SSH keys, approves their own new devices, creates vaults if the policy allows |
 
 `set_role()` to admin verifies the member's keys, seals them every organization vault's key ring and adds an admin certificate. To member it sends no keys; the server drops access that came only with the role and flags those vaults for rotation.
 
-**Transfer ownership** (enabled once there is a confirmed admin; "To hand the organization over, make someone an admin first.") signs an owner certificate for the chosen admin; the old owner stays an admin. **Delete organization** deletes it with all its vaults, then removes them from this device. Both ask for **Your master password**, sent as the AuthKey.
+**Transfer…** under **Ownership** on Settings (enabled once there is a confirmed admin; "To hand the team over, make someone an admin first.") signs an owner certificate for the chosen admin; the old owner stays an admin. **Delete team…** deletes it with all its vaults, then removes them from this device. Both ask for **Your master password**, sent as the AuthKey.
 
 ## Shared vaults and access
 
-**New vault** (placeholder "Staging") is shown to owners and admins, and to members when `members_can_create_vaults` is on. `create_vault()` seals a new vault key to every confirmed owner and admin (each must verify: "can't verify the keys of {email}") and to the creator, and puts the name in an encrypted `meta` item signed by the creator, so the server never sees it.
+**New vault**, a page action shown to owners and admins and to members when `members_can_create_vaults` is on, opens the Vaults tab with a bar: **Vault name** (placeholder "Staging"), **Cancel**, **Create vault**. `create_vault()` seals a new vault key to every confirmed owner and admin (each must verify: "can't verify the keys of {email}") and to the creator, and puts the name in an encrypted `meta` item signed by the creator, so the server never sees it.
 
 | Access | Label | Can |
 | --- | --- | --- |
@@ -126,11 +133,11 @@ A member certificate counts only while its signer is an owner or admin. When the
 | `write` | **Can edit** | Also add, change and delete items |
 | `manage` | **Can manage** | Also see who has access, grant, revoke, rotate |
 
-**Access** next to a vault (managers, not the directory) lists who has it. Owners and admins show "Can manage (owner or admin)" and can't be changed. **Give a member access…** lists confirmed plain members without access, with an access select (**Can edit** by default) and **Add**. `set_access()` only changes the permission for someone who already has the vault; a new grant verifies their keys and seals every key generation. **Remove** revokes, then explains: "They can't sync this vault anymore, but what they already had stays on their devices. Rotate the key (the button appears after the next sync) so they can't read anything added from now on, and change the passwords and keys they could see."
+**Access** on a vault's row (Vaults tab; managers, not the directory) opens under it who has it. Owners and admins show "Can manage (owner or admin)" and can't be changed. **Give a member access…** lists confirmed plain members without access, with an access select (**Can edit** by default) and **Add**. `set_access()` only changes the permission for someone who already has the vault; a new grant verifies their keys and seals every key generation. **Remove** revokes, then explains: "They can't sync this vault anymore, but what they already had stays on their devices. Rotate the key (the button appears after the next sync) so they can't read anything added from now on, and change the passwords and keys they could see."
 
 ## Key rotation
 
-The server sets `rotation_due` on a vault when anyone loses access to it: revoked, removed, left, or made a member again. The vault row then says "someone lost access since the key was made"; managers get **Rotate key** ("Rotating…") and the sidebar shows **Teams · rotate a key**.
+The server sets `rotation_due` on a vault when anyone loses access to it: revoked, removed, left, or made a member again. The vault's Key column then says "Rotate" (to managers; "Rotation due" to others), Needs you says "{vault}'s key should be rotated: someone lost access since it was made.", managers get **Rotate key** ("Rotating…") there and on the row, and the sidebar shows **Teams · rotate a key**.
 
 `rotate()` syncs the organization first, generates a vault key, seals it with a grant signature to every account the server lists as having access (each must verify), and switches with `previous_key_id` set to the current key (the server refuses a stale one with `409`). This device keeps every older generation in `vault_keys` and re-seals its own copies of the vault's items under the new key; the next sync pushes them. Any device with write access finishes what is left on its next sync, and a push under an old key (`stale_key`) is re-sealed and sent again. Rotation keeps the person who left out of what is written next; it can't take back what they synced. That is [Offboarding](offboarding.md).
 
@@ -154,35 +161,35 @@ When a round finds the account in fewer organizations than the device knows (lef
 
 ## Policies
 
-Owners and admins edit **Policies**; **Save policies** appears once something changed. `org_policies_set` always sends the whole set.
+Owners and admins change them on **Settings**, grouped (Security, Members, Session logs), each with what it does and a switch or a field; **Save settings** and **Discard** appear once something changed. `org_policies_set` always sends the whole set.
 
 | Policy | Control | Notes |
 | --- | --- | --- |
-| `require_totp` | **Require two-step verification to open the organization's vaults** | Disabled without `features.totp` unless on ("(this server doesn't offer two-step verification)") |
-| `members_can_create_vaults` | **Members can create vaults (they manage the ones they create)** | |
-| `allowed_email_domains` | **Invite only addresses at these domains (empty: any)** | Split on commas and spaces, leading `@` dropped, lowercased; the invite form checks it too |
-| `require_device_approval` | **Owners and admins approve new devices before they open the organization's vaults (…)** | Disabled unless the plan lists `device_approval` (or the server has no plans) or it is on: "Needs the Business plan." |
-| `require_member_keys` | **Members publish the SSH keys they use on the organization's servers (so leaving can remove them); the app reminds those who haven't** | `Option<bool>`, sent only once set, since a server may refuse a policy it doesn't know. Only the apps act on it |
-| `session_log_retention_days` | **Delete the team's session logs after this many days (0 keeps them)** | Only with `features.blobs`; 0 to 3650 (`min(3650)`) |
-| `require_sso` | None; a hint when on | Set on the server along with the identity provider (on the reference server, `vault-sync-server sso --require`); sent back unchanged |
+| `require_totp` | **Require two-step verification** | Disabled without `features.totp` unless on ("This server doesn't offer two-step verification."). Members without it are told where they look for the vaults ([Two-step verification required](account-and-devices.md#two-step-verification-required)) |
+| `members_can_create_vaults` | **Members can create vaults** | |
+| `allowed_email_domains` | **Invite only these domains** (empty: any) | Split on commas and spaces, leading `@` dropped, lowercased; the invite form checks it too |
+| `require_device_approval` | **Approve new devices** | Disabled unless the plan lists `device_approval` (or the server has no plans) or it is on, marked **Business plan** |
+| `require_member_keys` | **Ask members to publish their SSH keys** (the app reminds those who haven't) | `Option<bool>`, sent only once set, since a server may refuse a policy it doesn't know. Only the apps act on it |
+| `session_log_retention_days` | **Delete session logs after** {n} days (0 keeps them) | Only with `features.blobs`; 0 to 3650 (`min(3650)`) |
+| `require_sso` | None; a **Single sign-on** row saying "Required" when on | Set on the server along with the identity provider (on the reference server, `vault-sync-server sso --require`); sent back unchanged |
 
 The server enforces every policy but `require_member_keys`. It may check more than the app does: the reference server refuses an entry in `allowed_email_domains` that isn't a domain name ("not a domain: …"), and refuses `require_totp` with `501 not_supported`, since it has no two-step verification.
 
 ## Plans
 
-On a server with plans (such as morphgate.com), `org_details` carries the team's plan. The team page shows what the server reports: "{Plan} trial until {date}", "{Plan} plan, renews {date}", "The {Plan} plan ended {date}. Shared vaults keep syncing until {date}." (status `grace`), or "No plan", with seats used. Where the server enforces plans (`billing.plans_enforced`) and the team has no usable plan (`trialing`, `active` or `grace`), the team is locked: invites, policies, new vaults, publishing keys, device decisions, confirming and role changes are disabled, and its vaults count as view-only everywhere in the app (`orgs_locked`, `vaultEntries()`). Removing people, leaving, transferring and deleting stay possible. Phones and iPads (`mobileOs`) show no plan buttons: the app stores don't allow pointing at purchases outside them.
+On a server with plans (such as morphgate.com), `org_details` carries the team's plan. The team page shows what the server reports: "{Plan} trial until {date}", "{Plan} plan, renews {date}", "The {Plan} plan ended {date}. Shared vaults keep syncing until {date}." (status `grace`), or "No plan", with seats used; the owner's **Choose a plan ↗** (no plan) or **Manage plan ↗** beside **Invite people** opens the team's billing page in the account portal (`/account/team/{org}/billing`). Where the server enforces plans (`billing.plans_enforced`) and the team has no usable plan (`trialing`, `active` or `grace`), the team is locked: invites, policies, new vaults, publishing keys, device decisions, confirming and role changes are disabled, and its vaults count as view-only everywhere in the app (`orgs_locked`, `vaultEntries()`). Removing people, leaving, transferring and deleting stay possible. Phones and iPads (`mobileOs`) show no plan buttons: the app stores don't allow pointing at purchases outside them.
 
 ## Device approval, single sign-on and activity
 
-- **Devices** / **Waiting for approval** lists pending and denied devices (everyone's for owners and admins, your own otherwise) with **Approve** and **Deny**; this device's own row says "Approve it from another of your devices". A device that waits shows **Waiting for approval · {team}** (or "{team} denied this device") in the sidebar, which opens the `ApprovalWait` dialog (**Check again** syncs now).
+- **Devices waiting** (Members tab) lists pending and denied devices (everyone's for owners and admins, your own otherwise) with **Approve** and **Deny**; pending ones are in Needs you too; this device's own row says "Approve it from another of your devices". A device that waits shows **Waiting for approval · {team}** (or "{team} denied this device") in the sidebar, which opens the `ApprovalWait` dialog (**Check again** syncs now).
 - With a provider configured, the team page says "Single sign-on at {host}" and either "This device is signed in until {time}" or **Sign in**. Held vaults show **Sign in to {team}** in the sidebar. `SsoSignIn` opens the provider in the browser (`org_sso_start`), polls `org_sso_status` every 2 seconds (`POLL_MS`) until a session appears, then syncs; past `expires_in` it says "The sign-in expired. Start it again." The provider's protocol (OpenID Connect or SAML) is the server's business; the app only opens the address the server gives.
-- **Activity** (owners and admins), **Show activity**: `org_activity` reads every page (1000 events each, at most `ACTIVITY_PAGES` = 1000 pages) and keeps the newest `ACTIVITY_KEPT` = 5000; the panel shows 50 at a time (**Show older**). Names come from pinned emails and local vault names ("a former member", "a vault you can't open"). **Download CSV** and **Download JSON lines** save `morphgate-activity-{team}-{date}.{csv|jsonl}` in Downloads.
+- The **Activity** tab (owners and admins): `org_activity` reads every page (1000 events each, at most `ACTIVITY_PAGES` = 1000 pages) and keeps the newest `ACTIVITY_KEPT` = 5000; the panel shows 50 at a time (**Show older**). Names come from pinned emails and local vault names ("a former member", "a vault you can't open"). **Download CSV** and **Download JSON lines** save `morphgate-activity-{team}-{date}.{csv|jsonl}` in Downloads.
 
 ## Member key directory
 
-Offboarding needs to know which `authorized_keys` lines belong to someone, so members publish the public halves of the keys they use on the team's servers. The directory is an ordinary organization vault named "Member keys" (`DIRECTORY_NAME`) whose encrypted meta says `directory: true`, so servers need nothing new. Owners' and admins' apps create it and keep every confirmed member at `write`; if two appear, the lowest id is used. It shows as **Every member** with "Members' SSH public keys: {n} published".
+Offboarding needs to know which `authorized_keys` lines belong to someone, so members publish the public halves of the keys they use on the team's servers. The directory is an ordinary organization vault named "Member keys" (`DIRECTORY_NAME`) whose encrypted meta says `directory: true`, so servers need nothing new. Owners' and admins' apps create it and keep every confirmed member at `write`; if two appear, the lowest id is used. On the Vaults tab it shows as "Member keys" ("Members' SSH public keys"), **Every member**.
 
-**Your SSH keys** (until the directory reaches this device: "The organization's member key directory arrives with the next sync."): **Publish one of your keys…** lists the SSH keys of the personal vault not yet published; **Publish** (`member_key_publish`) stores a `member_key` item (`account_id`, `public_key` as OpenSSH `type base64`, `label`, `sig`) signed by this account; publishing the same key again returns the existing entry. **Unpublish** deletes the item. A reader accepts an entry only if its signature verifies with that member's own pinned key, so nobody else, the server included, can publish a key in someone's name; an entry still verifies after its author leaves. The member list shows "{n} SSH keys published" (verified entries only). With `require_member_keys` on, members without one see "none yet, and the organization asks for them" and the sidebar shows **Teams · publish your keys**.
+**Your SSH keys** (until the directory reaches this device: "The organization's member key directory arrives with the next sync."): **Publish one of your keys…** lists the SSH keys of the personal vault not yet published; **Publish** (`member_key_publish`) stores a `member_key` item (`account_id`, `public_key` as OpenSSH `type base64`, `label`, `sig`) signed by this account; publishing the same key again returns the existing entry. **Unpublish** deletes the item. A reader accepts an entry only if its signature verifies with that member's own pinned key, so nobody else, the server included, can publish a key in someone's name; an entry still verifies after its author leaves. The member list's SSH keys column shows "{n} published" (verified entries only). With `require_member_keys` on, members without one show "None yet", Needs you asks them to publish one (**Publish a key**), and the sidebar shows **Teams · publish your keys**.
 
 ## Data on this device
 

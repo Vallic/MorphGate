@@ -248,7 +248,10 @@ Login proves knowledge of `AuthKey` and returns short-lived tokens. The client n
 **Devices.** Each login registers a device (`name`, `platform`, public Ed25519 key). `GET /devices` lists them and `DELETE /devices/{id}` signs one out: its tokens stop working, and its next refresh gets `401 device_revoked` (servers keep answering that for the refresh token's lifetime), on which the app erases what it keeps (vaults, keys, settings, pinned host keys, its keychain entry) and returns to first run with a note saying why. Only that code erases. `401 account_deleted` (the account was deleted from another device or a website) turns sync off as *Disconnect → Keep a copy* does: the personal vault stays, now the only copy, and team vaults go. Every other 401 (an expired session, a reused refresh token, a password changed on another device) means "sign in again", and the data stays. A device that never connects again keeps what it has, encrypted under the master password, so the UI says signing out takes effect when the device next connects. A device's own *Disconnect* asks whether to erase it too or keep a copy that no longer syncs.
 
 **2FA.** TOTP on the account, checked at `/auth/login`; set up and turned off through
-`/account/totp…`, and turned off by recovery. WebAuthn isn't supported yet. Email-verified sign-up,
+`/account/totp…`, and turned off by recovery. An organization can require it
+(`policies.require_totp`): its vaults answer `403 totp_setup_required` (with `org_id`) to a member
+without it, and `GET /vaults` leaves them out, so the app checks the account when none of such an
+organization's vaults is listed. WebAuthn isn't supported yet. Email-verified sign-up,
 email changes and an account portal are optional features of the API spec
 ([`spec/openapi.yaml`](../spec/openapi.yaml)).
 

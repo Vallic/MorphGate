@@ -110,7 +110,7 @@ async function openTeams(s) {
   await s.click("button.sidebar-foot.teams");
   // Already in an organization: back to the list.
   await s.exec(
-    `const b = [...document.querySelectorAll(".panel button.link")].find((b) => b.innerText.includes("All organizations"));
+    `const b = [...document.querySelectorAll(".panel button.link")].find((b) => b.innerText.trim() === "← Teams");
      if (b) b.click(); return true`,
   );
   await s.waitText("Your fingerprint", ".panel");
@@ -118,12 +118,26 @@ async function openTeams(s) {
 
 async function openOrg(s, name) {
   await s.exec(
-    `const li = [...document.querySelectorAll(".panel .device-list li")].find((l) => l.querySelector("strong")?.innerText === arguments[0]);
-     li.querySelector("button").click(); return true`,
+    `const row = [...document.querySelectorAll(".panel [role=row]")].find((r) => r.querySelector(".lname")?.innerText === arguments[0]);
+     row.querySelector("button.lnamebtn").click(); return true`,
     name,
   );
   await s.waitText("Members", ".panel");
 }
+
+/** On a team's page: turns on the setting whose name has `name`, and saves. */
+async function turnOn(s, name) {
+  await s.pageTab("Settings");
+  const find = `[...document.querySelectorAll(".setting")].find((r) => r.querySelector(".setting-name")?.innerText.includes(arguments[0]))`;
+  await s.wait(() => s.exec(`return ${find} ? true : null`, name), `the setting ${name}`);
+  await s.exec(`${find}.querySelector("button[role=switch]").click(); return true`, name);
+  await s.clickButton("Save settings");
+  await s.wait(() => s.exec(`return [...document.querySelectorAll("button")].some((b) => b.innerText.includes("Save settings")) ? null : true`), "the settings to save");
+}
+
+/** A team page's row naming `name`, as text, or null. */
+const rowText = (s, name) =>
+  s.exec(`const r = [...document.querySelectorAll(".panel [role=row]")].find((r) => r.querySelector(".lname")?.innerText === arguments[0]); return r ? r.innerText : null`, name);
 
 const alice = await session(app, process.env.WD_URL_ALICE);
 const bob = await session(app, process.env.WD_URL_BOB);
@@ -138,20 +152,26 @@ try {
   // Alice: an organization, a vault, and an invite for Bob with write access to it.
   await openTeams(alice);
   const aliceFp = await fingerprint(alice);
-  await alice.type('input[aria-label="Organization name"]', "Acme Ops");
-  await alice.clickButton("Create");
+  await alice.clickButton("New team");
+  await alice.type('input[aria-label="Team name"]', "Acme Ops");
+  await alice.clickButton("Create team");
+  await alice.wait(() => alice.exec(`return document.querySelector(".panel.page h1")?.innerText === "Acme Ops" || null`), "the team's page");
+  await alice.pageTab("Vaults");
   await alice.waitText("No vaults yet", ".panel");
-  await alice.type('input[aria-label="New vault name"]', "Production");
   await alice.clickButton("New vault");
-  await alice.wait(() => alice.hasText(".panel .device-list strong", "Production"), "the new vault");
-  await alice.type('input[aria-label="Email to invite"]', bobEmail);
+  await alice.type('input[aria-label="Vault name"]', "Production");
+  await alice.clickButton("Create vault");
+  await alice.wait(() => alice.hasText(".panel .lname", "Production"), "the new vault");
+  await alice.clickButton("Invite people");
+  await alice.type('input[aria-label="Emails to invite"]', bobEmail);
   await alice.click(".grants input[type=checkbox]");
-  await alice.clickButton("Invite");
+  await alice.clickButton("Send invite");
   const token = await alice.wait(
     () => alice.exec(`const c = document.querySelector(".invite-code"); return c ? c.innerText.trim() : null`),
     "the invite code",
   );
   await alice.screenshot(`${shots}/alice-invited.png`);
+  await alice.clickButton("Done");
   ok("Alice created Acme Ops / Production and invited Bob");
 
   // Bob: looks the invite up and joins only because the owner's fingerprint matches.
@@ -170,18 +190,34 @@ try {
   ok("Bob saw Alice's fingerprint and joined");
 
   // Alice: confirms Bob only because his fingerprint matches what he reads out.
-  await alice.clickButton("All organizations");
+  await openTeams(alice);
   await openOrg(alice, "Acme Ops");
-  await alice.waitText("Waiting for confirmation", ".panel");
+  await alice.waitText("To confirm", ".panel");
+  await alice.screenshot(`${shots}/alice-needs-you.png`);
   await alice.clickButton("Confirm…");
-  assert.equal(await fingerprint(alice, "li.nested .fingerprint"), bobFp);
-  await alice.click("li.nested label.check input");
+  assert.equal(await fingerprint(alice, ".lexpand .fingerprint"), bobFp);
+  await alice.click(".lexpand label.check input");
   await alice.clickButton(`Confirm ${bobEmail}`);
   await alice.wait(
-    () => alice.exec(`return document.querySelector(".panel").innerText.includes("Waiting for confirmation") ? null : true`),
+    () => alice.exec(`return document.querySelector(".panel").innerText.includes("To confirm") ? null : true`),
     "Bob's confirmation",
   );
   ok("Alice compared Bob's fingerprint and confirmed him");
+  // The owner's role menu on Bob's row stays inside its column, at every width.
+  for (const w of [860, 1024, 1280, 1600]) {
+    await alice.resize(w, 800);
+    const spill = await alice.wait(
+      () =>
+        alice.exec(`const sel = document.querySelector('select[aria-label^="Role of"]');
+          if (!sel) return null;
+          const cell = sel.closest('[role="cell"]').getBoundingClientRect(), r = sel.getBoundingClientRect();
+          return String(Math.round(Math.max(r.right - cell.right, cell.left - r.left, 0)));`),
+      "Bob's role menu",
+    );
+    assert.equal(spill, "0", `the role menu spills ${spill}px out of its column at ${w}px`);
+  }
+  await alice.screenshot(`${shots}/alice-members.png`);
+  await alice.resize(1280, 800);
 
   // Alice: a host in the shared vault.
   await alice.click('button[title="New host"]');
@@ -251,7 +287,7 @@ try {
   await syncNow(alice);
   await syncUntil(bob, () => sidebarHas(bob, "lab1"), "lab1 on Bob's device");
   await openPage(bob, "Keys");
-  assert.ok(await bob.hasText(".panel strong", "lab key"), "the key came along");
+  assert.ok(await bob.hasText(".panel .lname", "lab key"), "the key came along");
   ok("Alice moved lab1 and the key it uses into Production; Bob has both");
   await alice.exec(`document.querySelector('.sidebar button[aria-label="Edit lab1"]').click(); return true`);
   await moveTo(alice, "Personal (only you)");
@@ -270,6 +306,7 @@ try {
   const bobKey = await bob.exec(`return document.querySelector(".panel textarea").value`);
   await openTeams(bob);
   await openOrg(bob, "Acme Ops");
+  await bob.pageTab("Your SSH keys");
   await bob.wait(() => bob.exec(`return document.querySelector('select[aria-label="Key to publish"]') ? true : null`), "the publish form");
   await bob.choose('select[aria-label="Key to publish"]', "bob laptop");
   await bob.clickButton("Publish");
@@ -280,7 +317,7 @@ try {
     await openTeams(alice);
     await openOrg(alice, "Acme Ops");
     try {
-      await alice.waitText("1 SSH key published", ".panel", 3000);
+      await alice.wait(async () => ((await rowText(alice, bobEmail)) ?? "").includes("1 published") || null, "Bob's published key", 3000);
       break;
     } catch (e) {
       if (i >= 15) throw e;
@@ -291,9 +328,10 @@ try {
   // Alice revokes Bob: the vault leaves his device, and Alice rotates its key.
   await openTeams(alice);
   await openOrg(alice, "Acme Ops");
+  await alice.pageTab("Vaults");
   await alice.clickButton("Access");
-  await alice.wait(() => alice.exec(`return document.querySelector("li.nested .access-row button.ghost-danger") ? true : null`), "the access list");
-  await alice.click("li.nested .access-row button.ghost-danger");
+  await alice.wait(() => alice.exec(`return document.querySelector(".lexpand .access-row button.ghost-danger") ? true : null`), "the access list");
+  await alice.click(".lexpand .access-row button.ghost-danger");
   await alice.waitText("Rotate the key", ".panel");
   await syncUntil(bob, () => bob.exec(`return document.querySelector(".sidebar .vault-tag") ? null : true`), "the vault to leave Bob's device");
   assert.ok(!(await sidebarHas(bob, "db1-primary")));
@@ -313,26 +351,19 @@ try {
   // Policies: members may create vaults, and Bob makes one he manages.
   await openTeams(alice);
   await openOrg(alice, "Acme Ops");
-  await alice.waitText("Policies", ".panel");
-  await alice.exec(
-    `[...document.querySelectorAll(".panel label.check")].find((l) => l.innerText.includes("Members can create vaults")).querySelector("input").click(); return true`,
-  );
-  await alice.clickButton("Save policies");
-  await alice.wait(
-    () => alice.exec(`return [...document.querySelectorAll("button")].some((b) => b.innerText.includes("Save policies")) ? null : true`),
-    "the saved policies",
-  );
+  await turnOn(alice, "Members can create vaults");
   await openTeams(bob);
   await openOrg(bob, "Acme Ops");
-  await bob.wait(() => bob.exec(`return document.querySelector('input[aria-label="New vault name"]') ? true : null`), "Bob's new-vault form");
-  await bob.type('input[aria-label="New vault name"]', "Bob's tools");
+  await bob.wait(() => bob.exec(`return [...document.querySelectorAll(".page-actions button")].some((b) => b.innerText === "New vault" && !b.disabled) || null`), "Bob's New vault");
   await bob.clickButton("New vault");
-  await bob.wait(() => bob.hasText(".panel .device-list strong", "Bob's tools"), "Bob's vault");
-  assert.ok(await bob.hasText(".panel .device-list .kind-badge", "Can manage"));
+  await bob.type('input[aria-label="Vault name"]', "Bob's tools");
+  await bob.clickButton("Create vault");
+  await bob.wait(() => bob.hasText(".panel .lname", "Bob's tools"), "Bob's vault");
+  assert.ok(((await rowText(bob, "Bob's tools")) ?? "").includes("Can manage"));
   ok("Alice let members create vaults; Bob made one he manages");
 
   // The activity log tells the story.
-  await alice.clickButton("Show activity");
+  await alice.pageTab("Activity");
   const log = await alice.waitText("rotated the key of Production", ".panel");
   assert.ok(log.includes(`invited ${bobEmail}`), "the invite is in the log");
   assert.ok(log.includes(`removed ${bobEmail}'s access to Production`), "the revocation is in the log");
@@ -351,9 +382,7 @@ try {
   ok("Alice downloaded the activity log as CSV");
 
   // Acme Ops asks members to publish their SSH keys: Alice hasn't, so Teams reminds her.
-  await alice.exec(`[...document.querySelectorAll(".page-aside label.check")].find((l) => l.innerText.includes("publish the SSH keys")).querySelector("input").click(); return true`);
-  await alice.clickButton("Save policies");
-  await alice.wait(() => alice.exec(`return [...document.querySelectorAll(".page-aside button")].some((b) => b.innerText.includes("Save policies")) ? null : true`), "the saved policy");
+  await turnOn(alice, "Ask members to publish their SSH keys");
   await syncUntil(
     alice,
     () => alice.exec(`const b = document.querySelector("button.sidebar-foot.teams"); return b && b.innerText.includes("publish your keys") ? true : null`),
@@ -367,13 +396,7 @@ try {
   // Device approval: Alice requires it. Bob's current device stays approved; his new one
   // (Carol's app, signed in to Bob's account) waits, Alice denies it, and Bob approves it from
   // his first device.
-  await alice.wait(
-    () => alice.exec(`return [...document.querySelectorAll(".page-aside label.check")].some((l) => l.innerText.includes("approve new devices")) || null`),
-    "the policies",
-  );
-  await alice.exec(`[...document.querySelectorAll(".page-aside label.check")].find((l) => l.innerText.includes("approve new devices")).querySelector("input").click(); return true`);
-  await alice.clickButton("Save policies");
-  await alice.wait(() => alice.exec(`return [...document.querySelectorAll(".page-aside button")].some((b) => b.innerText.includes("Save policies")) ? null : true`), "the policies to save");
+  await turnOn(alice, "Approve new devices");
 
   // Bob's second device started out with a vault of its own, a host in it, and joins his account
   // from Sync ("I have an account"): the host goes into his account, and Acme Ops' vaults wait for
@@ -411,7 +434,7 @@ try {
 
   await openTeams(alice);
   await openOrg(alice, "Acme Ops");
-  await alice.waitText("Waiting for approval", ".panel.page");
+  await alice.waitText("waits for approval", ".needs");
   await alice.screenshot(`${shots}/alice-device-request.png`);
   await alice.exec(`[...document.querySelectorAll(".device-requests button")].find((b) => b.innerText === "Deny").click(); return true`);
   await alice.waitText("Denied", ".device-requests");
@@ -421,6 +444,7 @@ try {
 
   await openTeams(bob);
   await openOrg(bob, "Acme Ops");
+  await bob.pageTab("Members");
   await bob.waitText("Denied", ".device-requests");
   await bob.exec(`[...document.querySelectorAll(".device-requests button")].find((b) => b.innerText === "Approve").click(); return true`);
   await bob.wait(() => bob.exec(`return document.querySelector(".device-requests") ? null : true`), "the request to go");
@@ -428,7 +452,7 @@ try {
   await syncUntil(carol, () => carol.exec(`return document.querySelector("button.sidebar-foot.approval") ? null : true`), "the approval");
   await openTeams(carol);
   await openOrg(carol, "Acme Ops");
-  await carol.wait(() => carol.hasText(".panel .device-list strong", "Bob's tools"), "Bob's vault on his new device");
+  await carol.wait(() => carol.hasText(".panel .lname", "Bob's tools"), "Bob's vault on his new device");
   await carol.screenshot(`${shots}/carol-approved.png`);
   ok("Acme Ops required device approval: Bob's new device waited, Alice denied it, Bob approved it from his first device");
 
@@ -438,7 +462,8 @@ try {
     await syncNow(alice).catch(() => {});
     await openTeams(alice);
     await openOrg(alice, "Acme Ops");
-    if (await alice.hasText(".panel .device-list strong", "Bob's tools")) break;
+    await alice.pageTab("Vaults");
+    if (await alice.hasText(".panel .lname", "Bob's tools")) break;
     if (i >= 15) throw new Error("Bob's vault never reached Alice");
     await new Promise((r) => setTimeout(r, 1000));
   }
@@ -557,7 +582,7 @@ try {
 
   // The session: box's row is live in the sidebar; Files in the route bar opens SFTP on it.
   await alice.wait(
-    () => alice.exec(`return document.querySelector(".sidebar .list li.selected .avatar .live.connected") ? true : null`),
+    () => alice.exec(`return document.querySelector(".sidebar .list li.selected .sq.connected") ? true : null`),
     "box's live square",
   );
   await alice.wait(() => alice.exec(`return document.querySelector(".route-bar .pinned-key") ? true : null`), "the pinned key");
@@ -574,6 +599,7 @@ try {
   // Shared credentials and a group: box signs in as the group's "lab" identity and keeps its
   // session in tmux on the server; Reconnect picks that session back up.
   await openPage(alice, "Keys");
+  await alice.pageTab("Identities");
   await alice.clickButton("New identity");
   await alice.waitText("New identity", ".panel");
   await pickIn(alice, "Vault", "Bob's tools");
@@ -583,7 +609,8 @@ try {
   await alice.click(".panel form button[type=submit]");
   await alice.waitText("Edit identity", ".panel");
   await openPage(alice, "Keys");
-  await alice.wait(() => alice.hasText(".panel strong", "lab"), "the lab identity");
+  await alice.pageTab("Identities");
+  await alice.wait(() => alice.hasText(".panel .lname", "lab"), "the lab identity");
   await alice.click('button[aria-label="New group"]');
   await alice.waitText("New group", ".panel");
   await pickIn(alice, "Vault", "Bob's tools");
@@ -608,8 +635,8 @@ try {
   // The group's page lists it, with the identity its hosts use.
   await alice.exec(`document.querySelector('.sidebar button[aria-label="Open group Lab"]').click(); return true`);
   await alice.wait(() => alice.exec(`return document.querySelector(".panel.page h1")?.innerText === "Lab" || null`), "the Lab group's page");
-  assert.ok(await alice.hasText(".panel .page-main strong", "box"), "box is on the Lab page");
-  assert.ok(await alice.hasText(".panel .page-aside strong", "lab"), "so is the lab identity");
+  assert.ok(await alice.hasText(".panel .page-main .lname", "box"), "box is on the Lab page");
+  assert.ok(await alice.hasText(".panel .use-card .use-name", "lab"), "so is the lab identity");
   await alice.screenshot(`${shots}/alice-group-page.png`);
   await alice.exec(
     `[...document.querySelectorAll(".sidebar .host-group li")].find((l) => l.querySelector(".row-title")?.innerText === "box").querySelector(".row-main").click(); return true`,
@@ -711,7 +738,7 @@ try {
   assert.match(notice, new RegExp(`signed out of ${bobEmail.replace(/[.+]/g, "\\$&")} from another device`));
   assert.ok(await carol.exec(`return !!document.querySelector(".gate-choice")`), "back at the first screen");
   await carol.screenshot(`${shots}/carol-signed-out.png`);
-  await carol.exec(`[...document.querySelectorAll(".gate-choice button")].find((b) => b.innerText === "I have an account").click(); return true`);
+  await carol.exec(`[...document.querySelectorAll(".gate-choice button")].find((b) => b.innerText === "Sign in").click(); return true`);
   await useOwnServer(carol);
   await carol.typeLabelled("Email", bobEmail);
   await carol.typeLabelled("Master password", PASSWORD);

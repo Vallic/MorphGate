@@ -85,7 +85,7 @@ On a server with `email_verification`, the first **Enable sync** sends `POST /v1
 
 | Where | Command | What it does |
 | --- | --- | --- |
-| First screen, **I have an account**, titled **Sign in to sync** | `sync_sign_in` | For a device with no vault ("This device already has a vault." otherwise): takes the account's keys and vault key, unlocks; items arrive with the first round |
+| First screen, **Sign in**, titled **Sign in to sync** | `sync_sign_in` | For a device with no vault ("This device already has a vault." otherwise): takes the account's keys and vault key, unlocks; items arrive with the first round |
 | Sync panel, **I have an account** | `sync_join` | For a device with a vault of its own that never synced: its items, files included, move into the account's vault with the same ids, and it opens with the account's master password and recovery key from then on. Keychain unlock is set up again with the account's keys (Android's fingerprint unlock goes off). Refused with "this device syncs already" or "this device has team vaults: it synced before". A wrong password changes nothing |
 | Sync panel while signed out, **Sign in again** | `sync_sign_in_again` | Same device id; re-wraps this vault's keys under the account's current password (it may have changed on another device) |
 | First screen, **Forgot the master password? Use your recovery key** | `sync_recover_sign_in` | New password with the recovery key, then a sign-in; see [Account and devices](account-and-devices.md#password-changes-and-recovery) |

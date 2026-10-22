@@ -76,7 +76,7 @@ A login command wins; the host editor disables the tmux checkbox while one is se
 | `+N` | A split with N more panes; the title says when typing goes to all of them |
 | Close (×) | "Close tab", or "Close the tab and its panes" for a split |
 
-Sessions open from the sidebar (click a host), the Hosts page (**Connect**), and **Quick connect** (the plus at the end of the tab bar). A host can have any number of tabs. Every `TerminalView` stays mounted whatever is shown, so hidden sessions keep running. Locking the vault unmounts the workspace, and each `TerminalView` disconnects as it goes; `vault_lock` itself stops tunnels, SFTP and VPNs. Tabs are kept in memory only: they are not restored after a restart or an unlock.
+Sessions open from the sidebar (click a host), the Hosts page (**Connect**), and **Quick connect** (the plus at the end of the tab bar, or the Hosts page's **Quick connect**). A host can have any number of tabs. Every `TerminalView` stays mounted whatever is shown, so hidden sessions keep running. Locking the vault unmounts the workspace, and each `TerminalView` disconnects as it goes; `vault_lock` itself stops tunnels, SFTP and VPNs. Tabs are kept in memory only: they are not restored after a restart or an unlock.
 
 ## Split panes
 
@@ -122,7 +122,7 @@ A `snippet` item: `name` (trimmed), `body` (exactly as typed), `tags` (trimmed, 
 | **Delete**, then **Really delete?** | Deletes |
 | **Close**, **Save snippet** / **Save changes** | |
 
-The Snippets page (sidebar **Snippets**) has **Edit** per row, and **Paste** and **Run** while a terminal is connected, **Select** for bulk delete and move, **Import…** and **New snippet**. On a phone, the terminal's **More** menu has **Snippets**.
+The Snippets page (sidebar **Snippets**) lists them as a table (name, the command's first line, tags), with **Edit** per row (or the name), and **Paste** and **Run** while a terminal is connected, a search and tag filters, **Select** for bulk delete and move, **Import…** and **New snippet**. On a phone, the terminal's **More** menu has **Snippets**.
 
 | Behavior | Detail |
 | --- | --- |

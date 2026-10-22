@@ -33,6 +33,13 @@ const tapText = (css, text) =>
 
 try {
   await s.resize(390, 844);
+  // The first screen's three choices fit a phone.
+  await s.wait(() => s.exec(`return document.querySelector(".gate-choice") ? true : null`), "the first screen", 60000);
+  assert.ok(
+    await s.exec(`return [...document.querySelectorAll(".gate-choice button")].every((b) => b.scrollWidth <= b.clientWidth && b.getBoundingClientRect().height < 40)`),
+    "the choices fit on one line",
+  );
+  await s.screenshot(`${shots}/first-screen.png`);
   await createVault(s, PASSWORD, shots);
   await s.wait(() => s.exec(`return document.querySelector(".m-home") ? true : null`), "the phone layout");
   ok("a phone-sized window gets the phone layout");
@@ -200,8 +207,8 @@ try {
   await tap('.m-sftp:not([hidden]) .m-bar button[aria-label="Back"]');
   await tapText(".m-nav button", "More");
   await tapText(".m-row", "Session logs");
-  await s.wait(() => s.hasText(".panel.page .device-list strong", "box"), "the recording in Session logs");
-  await tapText(".panel.page .device-list button", "Play");
+  await s.wait(() => s.hasText(".panel.page .lname", "box"), "the recording in Session logs");
+  await tapText(".panel.page .lrow .rowact button", "Play");
   await s.wait(
     async () => (await s.exec(`const r = document.querySelector(".player-screen .xterm-rows"); return r ? r.innerText : ""`)).includes("arrow-42") || null,
     "the recording to play",

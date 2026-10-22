@@ -41,7 +41,7 @@ A refused link shows a banner: "MorphGate can't open this link: {reason}".
 | Another scheme (`https://…`) handed to the app | Dropped silently (`received()` keeps only its own schemes) | |
 | `connect` | Fills in host, port, user and label only. The person picks how to sign in, and the host key is checked as for any connection | Connecting is the person's decision; a link could point at a look-alike host |
 | Host or user with other characters (`a;rm -rf`, `root;id`) | Refused | Only names and addresses get through, never shell syntax or options |
-| `invite` while sync is off or signed out | Notice "This is an invite to a team on {server}. Turn on sync with the invited address first, then open the link again." and the Sync page opens | An invite is accepted by a signed-in account |
+| `invite` while sync is off or signed out | Notice "This is an invite to a team on {server}. Turn on sync with the invited address: Teams opens with the invite once it's on." and the Sync page opens; once sync is on, Teams opens with it | An invite is accepted by a signed-in account |
 | `invite` whose `server` is not the server this device syncs with | Notice "This invite is for a team on {server}, but this device syncs with {other}."; nothing opens | Invite codes are only valid on the server that made them |
 
 Joining still needs the fingerprint check and a click on **Join {team}**; quick connect still needs **Connect**. [Trust boundaries](../architecture.md#trust-boundaries) lists links among the app's inputs.
@@ -51,11 +51,13 @@ Joining still needs the fingerprint check and a click on **Join {team}**; quick 
 1. The operating system hands the URL to `tauri-plugin-deep-link`: at launch (`get_current()` in setup) or while running (`on_open_url`).
 2. On Windows and Linux a link starts a second copy of the app. `tauri-plugin-single-instance` (with its `deep-link` feature) passes the URL to the copy already running for this user's vault and the second copy exits. On macOS and the phones the system delivers the URL to the running app.
 3. `links::received()` parses each URL into a `Received {link, error}`, appends it to the `Links` queue, brings the window forward on desktop (`show()`: unminimize, show, focus) and emits `links-pending`.
-4. The unlocked workspace calls `links_take` when it mounts and on every `links-pending`, and opens each link (`openLink` in `App.tsx`). While the vault is locked nothing takes them, so they wait in the queue until unlock.
+4. The unlocked workspace calls `links_take` once it knows whether sync is on, and on every `links-pending`, and opens each link (`openLink` in `App.tsx`). While the vault is locked nothing takes them, so they wait in the queue until unlock. Before there's a vault, the first screen shows a waiting invite without taking it ([First run](vault-and-unlock.md#first-run)).
 
 | Command or event | Does |
 | --- | --- |
 | `links_take` | Returns and empties the queue of received links |
+| `links_peek` | Returns the queue, leaving it as it is |
+| `links_add_invite` | An invite pasted on the first screen: its code, `https://…/invite/{code}`, or a `morphgate://invite` link (`pasted_invite`). Replaces an invite already waiting |
 | `links-pending` (event) | A link arrived; the workspace takes it |
 
 ## Registering the scheme

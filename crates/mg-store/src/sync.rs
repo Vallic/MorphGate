@@ -143,6 +143,8 @@ pub enum RemoteError {
 /// and sync once it's settled.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Hold {
+    /// Turn on two-step verification for the account: the organization requires it.
+    Totp,
     /// Sign in at the organization's identity provider.
     Sso,
     /// An owner or admin, or one of the member's approved devices, has to approve this device.

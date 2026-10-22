@@ -824,6 +824,7 @@ pub async fn refresh_with(
     let mut known = HashSet::new();
     let mut approving = Vec::new();
     let mut keys_required = Vec::new();
+    let mut totp_required = Vec::new();
     for m in &memberships {
         known.insert(m.id.clone());
         let mut snap = match last.remove(&m.id).filter(|s| m.rev == Some(s.rev)) {
@@ -848,6 +849,9 @@ pub async fn refresh_with(
         }
         if m.status == MemberStatus::Confirmed && org.policies.require_member_keys == Some(true) {
             keys_required.push(m);
+        }
+        if m.status == MemberStatus::Confirmed && org.policies.require_totp {
+            totp_required.push(m.id.clone());
         }
         {
             let v = lock(vault)?;
@@ -912,6 +916,24 @@ pub async fn refresh_with(
 
     let vaults = client.list_vaults().await?;
     report.heads = vaults.iter().map(|v| (v.id.clone(), v.head_rev)).collect();
+    // An organization that requires two-step verification leaves its vaults out of the list for
+    // an account without it, without saying why. When none of its vaults is listed (it may have
+    // none for this account yet), the account says whether that's the reason.
+    let totp_unlisted: Vec<String> = totp_required
+        .into_iter()
+        .filter(|org| !vaults.iter().any(|v| v.org_id.as_ref() == Some(org)))
+        .collect();
+    if !totp_unlisted.is_empty() {
+        match client.account().await {
+            Ok(account) if !account.totp_enabled => {
+                for org in totp_unlisted {
+                    note_held(&mut report.held, org, Hold::Totp);
+                }
+            }
+            Ok(_) => {}
+            Err(e) => report.errors.push(format!("two-step verification: {e}")),
+        }
+    }
     // Former members this device verified: their grants and vault names stay valid.
     let pins = lock(vault)?.pinned()?;
     let mut keep = HashSet::new();
@@ -962,7 +984,7 @@ pub async fn refresh_with(
                 note_held(&mut report.held, org, why);
                 keep.insert(id);
             }
-            // Listed late, held back by two-step verification, or unknown: keep it.
+            // Listed late, held back by a server that doesn't say why, or unknown: keep it.
             _ => {
                 keep.insert(id);
             }
