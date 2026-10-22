@@ -642,6 +642,35 @@ impl LocalVault {
         })
     }
 
+    /// Creates item `id` in `vault_id`: an id worked out rather than drawn ([`derived_id`]), so
+    /// two devices making the same item write the same one, and the second gets a conflict
+    /// instead of a duplicate. Refused when a live item has the id.
+    pub fn insert_in(&mut self, vault_id: &str, id: &str, data: ItemData) -> Result<Item> {
+        if self.unlocked()?.access(vault_id)? < Access::Write {
+            return Err(Error::ReadOnly);
+        }
+        if data == ItemData::Unknown {
+            return Err(Error::Invalid(
+                "this app can't edit that kind of item".into(),
+            ));
+        }
+        let live: bool = self.conn.query_row(
+            "SELECT EXISTS (SELECT 1 FROM items WHERE id = ?1 AND deleted = 0)",
+            [id],
+            |r| r.get(0),
+        )?;
+        if live {
+            return Err(Error::Invalid(format!("item {id} already exists")));
+        }
+        let now = self.put(vault_id, id, &data)?;
+        Ok(Item {
+            id: id.to_owned(),
+            vault_id: vault_id.to_owned(),
+            updated_at: now,
+            data,
+        })
+    }
+
     /// Checks `data` as an item `id` of `vault`, seals it with the vault's current key and stores
     /// it for the next sync (over a tombstone of the same id, too). Returns the time stamped.
     pub(crate) fn put(&mut self, vault_id: &str, id: &str, data: &ItemData) -> Result<i64> {
@@ -741,6 +770,9 @@ impl LocalVault {
                 ItemData::Host(h) if h.identity_ref.as_deref() == Some(id) => Some(h.label),
                 ItemData::Host(h) if h.source.as_ref().is_some_and(|s| s.source_ref == id) => {
                     Some(h.label)
+                }
+                ItemData::Snippet(s) if s.source.as_ref().is_some_and(|s| s.source_ref == id) => {
+                    Some(format!("snippet {}", s.name))
                 }
                 ItemData::CloudSource(c)
                     if c.key_ref.as_deref() == Some(id) || c.jump_ref.as_deref() == Some(id) =>
@@ -1118,6 +1150,14 @@ impl LocalVault {
                 if s.name.trim().is_empty() {
                     return invalid("snippet name is required");
                 }
+                if let Some(source) = &s.source {
+                    self.expect(
+                        vault,
+                        &source.source_ref,
+                        "the snippet's feed does not exist",
+                        |d| matches!(d, ItemData::CloudSource(_)),
+                    )?;
+                }
             }
             ItemData::MemberKey(k) => {
                 if k.account_id.is_empty() || k.public_key.split_ascii_whitespace().count() != 2 {
@@ -1224,12 +1264,35 @@ impl LocalVault {
                 }
             }
             ItemData::CloudSource(c) => {
-                if !["vallic", "aws", "gcp", "azure", "hetzner", "digitalocean"]
-                    .contains(&c.provider.as_str())
+                if ![
+                    "vallic",
+                    "aws",
+                    "gcp",
+                    "azure",
+                    "hetzner",
+                    "digitalocean",
+                    "feed",
+                ]
+                .contains(&c.provider.as_str())
                 {
                     return invalid(
-                        "a cloud source's provider is vallic, aws, gcp, azure, hetzner or digitalocean",
+                        "a cloud source's provider is vallic, aws, gcp, azure, hetzner, digitalocean or feed",
                     );
+                }
+                if c.provider == "feed" {
+                    let url = c.url.as_deref().unwrap_or("");
+                    let local = ["localhost", "127.0.0.1", "[::1]"].iter().any(|h| {
+                        url.strip_prefix("http://").is_some_and(|rest| {
+                            rest.strip_prefix(h)
+                                .is_some_and(|r| r.is_empty() || r.starts_with([':', '/']))
+                        })
+                    });
+                    if !(url.starts_with("https://") && url.len() > 8) && !local {
+                        return invalid("a feed's address starts with https://");
+                    }
+                    if c.token.as_deref().is_none_or(|t| t.trim().is_empty()) {
+                        return invalid("a feed needs the token it's read with");
+                    }
                 }
                 if let Some(key) = &c.key_ref {
                     self.expect(vault, key, "the selected key does not exist", |d| {
@@ -1549,6 +1612,24 @@ pub(crate) fn decrypt(
     serde_json::from_slice(&plain).map_err(|e| Error::Corrupt(format!("item {id}: {e}")))
 }
 
+/// An item id worked out from `parts` rather than drawn: SHA-256 of them, as a ULID. Every
+/// device that makes the item from the same parts (a source's vault, the source, what it lists)
+/// gives it the same id.
+pub fn derived_id(parts: &[&str]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hash = Sha256::new();
+    hash.update(b"morphgate derived item id v1");
+    for p in parts {
+        // Each part with its length: no two lists of parts run together the same.
+        hash.update((p.len() as u64).to_be_bytes());
+        hash.update(p.as_bytes());
+    }
+    let digest = hash.finalize();
+    let mut bytes = [0u8; 16];
+    bytes.copy_from_slice(&digest[..16]);
+    Ulid::from_bytes(bytes).to_string()
+}
+
 pub(crate) fn now() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1804,6 +1885,7 @@ mod tests {
                     name: "disk".into(),
                     body: "df -h".into(),
                     tags: vec![],
+                    source: None,
                 }),
             )
             .unwrap();

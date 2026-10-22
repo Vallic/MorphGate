@@ -18,7 +18,7 @@ An item is an `ItemData` serialized as JSON with a `type` tag (`{"type": "host",
 | `vpn` | A VPN profile a host can go through | [VPN](vpn.md) |
 | `terminal_theme` | Terminal colors | [Appearance](appearance.md) |
 | `session_log` | A recorded session (blobs) | [Session logs](session-logs.md) |
-| `cloud_source` | Hosts kept in step with a cloud | [Cloud sources](cloud-sources.md) |
+| `cloud_source` | Hosts kept in step with a cloud or a feed | [Cloud sources](cloud-sources.md) |
 | `member_key` | A member's published SSH public key; only in an organization's directory vault | [Teams](teams.md) |
 | unknown | A kind a newer app wrote: kept and synced, left out of lists, never edited or moved | |
 

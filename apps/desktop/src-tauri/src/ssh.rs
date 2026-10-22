@@ -184,6 +184,7 @@ pub(crate) fn resolve(target: Target, vault: &VaultState) -> Result<Resolved, St
                     user,
                     auth,
                     via_command: None,
+                    listed_keys: None,
                 },
                 jumps: Vec::new(),
                 vpn: None,
@@ -313,12 +314,25 @@ fn saved_hop(
             fingerprint: key,
         },
     };
+    // The host keys its feed lists: they decide, instead of what this device pinned.
+    let listed_keys = host
+        .source
+        .as_ref()
+        .filter(|s| !s.host_keys.is_empty())
+        .map(|s| mg_ssh::ListedKeys {
+            keys: s.host_keys.clone(),
+            from: match v.item(&s.source_ref).map(|i| i.data) {
+                Ok(ItemData::CloudSource(c)) => c.label,
+                _ => "its feed".into(),
+            },
+        });
     Ok(Hop {
         host: host.hostname,
         port: host.port,
         user: host.user,
         auth,
         via_command: host.jump_command,
+        listed_keys,
     })
 }
 
@@ -520,6 +534,7 @@ pub async fn ssh_connect(
         auth: target.auth,
         jumps,
         via_command: target.via_command,
+        listed_keys: target.listed_keys,
         dialer,
         term: "xterm-256color".into(),
         size: request.size,

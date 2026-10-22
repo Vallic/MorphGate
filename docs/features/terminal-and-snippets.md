@@ -112,7 +112,21 @@ Shown above terminal tabs (`RouteBar.tsx`). Its menus close on a click elsewhere
 
 ## Snippets
 
-A `snippet` item: `name` (trimmed), `body` (exactly as typed), `tags` (trimmed, empty ones dropped, left out of the JSON when there are none). Lists sort by name, ignoring case. A snippet lives in any vault; in a view-only vault it can be sent but not edited. Importing from CSV is in [Importing](importing.md).
+A `snippet` item: `name` (trimmed), `body` (exactly as typed), `tags` (trimmed, empty ones dropped, left out of the JSON when there are none), and `source` (`SnippetSource {source_ref, external_id}`) when a feed keeps it. Lists sort by name, ignoring case. A snippet lives in any vault; in a view-only vault it can be sent but not edited. Importing from CSV is in [Importing](importing.md).
+
+### A feed's snippets
+
+A feed ([Cloud sources](cloud-sources.md#feeds)) brings snippets as well as hosts. The feed decides them whole: each refresh sets name, body and tags, and deletes one the feed no longer lists (nobody's edits are lost: they can't be edited). In the app they are read-only:
+
+| Where | Difference |
+| --- | --- |
+| Snippets page | "From {feed} (read-only)" under the snippet's name; the row's icon is **Open** rather than **Edit** |
+| Editor | "From the feed **{feed}**: it changes there, and is read-only here." with **Make a copy** (a snippet of one's own, "{name} (copy)", in the same vault, or the personal one when that's view-only, which then opens); the fields are read-only, and there's no **Save** or **Delete** |
+| `snippet_save`, `snippet_delete` | Refused: "\"{name}\" comes from {feed}: it changes there, or make a copy to change it here" |
+| Bulk delete | Left out: "\"{name}\" comes from a feed: it goes when the feed drops it" |
+| Removing the feed | **Remove it, its hosts and snippets** deletes them; **Remove it, keep the hosts and snippets** makes them ordinary snippets |
+
+**Run** and **Paste** ask first when the feed changed the body since this device last sent it: "{name} changed", "Changed by **{feed}** on {date}, since you last ran it on this device. It now runs:" with the body, **Cancel** and **Run it** (or **Paste it**) (`SnippetCheck.tsx`). Every place a snippet is sent goes through `guardSnippet` in `App.tsx`: the route bar's menu, the Snippets page, the editor and the phone's **Snippets** sheet. After a feed's snippet is sent, `snippet_sent` keeps the SHA-256 of its body on this device (setting `snippet-sent:<id>`, not synced); `snippets_list` sets `changed` when that hash is there and differs from the body's. A snippet never sent from this device doesn't ask.
 
 | Control (`SnippetPanel.tsx`) | Does |
 | --- | --- |
@@ -136,6 +150,7 @@ The Snippets page (sidebar **Snippets**) lists them as a table (name, the comman
 | `snippets_list` | All snippets in every vault |
 | `snippet_save` | `{id?, vaultId?, name, body, tags}`; a new snippet goes to `vaultId` or the personal vault |
 | `snippet_delete` | `id` |
+| `snippet_sent` | `id`: this device sent a feed's snippet (keeps its body's hash) |
 
 ## Keyboard
 
@@ -162,6 +177,7 @@ The phone layout (`mobile/MobileWorkspace.tsx`) is used on Android and iPhone, a
 | `apps/desktop/e2e/teams.mjs` | A group's identity and tmux session; **Reconnect** picks the tmux session back up |
 | `apps/desktop/e2e/mobile.mjs` | Ctrl and ↑ from the extra-key row; Esc then a snippet runs as written; a snippet imported from CSV |
 | `apps/desktop/src-tauri/src/bulk.rs`: `deletes_snippets_and_groups_and_says_what_it_leaves` | Bulk delete |
+| `apps/desktop/e2e/appimage.mjs` (the feed) | A feed's snippet runs; it's read-only with **Make a copy**; changed by the feed, running it asks first, once |
 
 The e2e scenarios run with `apps/desktop/e2e/run.sh` (`E2E_ONLY=appimage`, `teams` or `mobile` for one).
 

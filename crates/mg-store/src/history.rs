@@ -97,6 +97,7 @@ mod tests {
             name: "uptime".into(),
             body: "uptime".into(),
             tags: vec![],
+            source: None,
         })
     }
 

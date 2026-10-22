@@ -29,6 +29,13 @@ prompt. Write them for users.
   versions of the app keep syncing alongside this one.
 - Install and restart waits for an update check that's still running, so it installs the update
   that check found.
+- Feeds: hosts and snippets from an address your team publishes (Hosts → Add from… → Feed URL…),
+  read with a token. They stay in step with it on their own, every 15 minutes; your renames, keys,
+  tags and notes stay yours. A feed can list each server's host key, so new servers connect
+  without asking you to trust them, and a server with another key is refused. Its snippets are
+  read-only, and when the feed changes one, Run and Paste show you the new commands first.
+- Two devices refreshing the same cloud source at once no longer make duplicate hosts or
+  "(conflict)" copies.
 
 ## 0.2.0
 

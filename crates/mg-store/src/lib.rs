@@ -27,9 +27,12 @@ pub use mg_vault::BlobKind;
 pub use model::{
     Attachment, CertRenewal, CloudReach, CloudSource, ForwardRule, Host, HostAuth, HostCa,
     HostGroup, HostSource, Identity, Item, ItemData, LogChunk, MAX_ATTACHMENT_BYTES, MemberKey,
-    PortForward, SessionLog, Snippet, SshKey, TerminalTheme, VpnKind, VpnProfile, is_hex_color,
+    PortForward, SessionLog, Snippet, SnippetSource, SshKey, TerminalTheme, VpnKind, VpnProfile,
+    is_hex_color,
 };
 pub use moving::{Carry, MovePlan, Moved, Planned, Why};
-pub use vault::{Access, LocalVault, MIN_PASSWORD_CHARS, NewCredentials, Status, VaultInfo};
+pub use vault::{
+    Access, LocalVault, MIN_PASSWORD_CHARS, NewCredentials, Status, VaultInfo, derived_id,
+};
 
 pub type Result<T> = core::result::Result<T, Error>;

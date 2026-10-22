@@ -622,6 +622,127 @@ try {
   await s.click(".tab.active .close");
   ok("added DigitalOcean through its CLI: its droplet became a host and connected");
 
+  // A feed (host-feed.mjs): Add from… → Feed URL…, read with its token; its host connects with
+  // the host key the feed lists (nothing asks), another listed with the wrong key is refused, an
+  // invalid entry is skipped and said; its snippet is read-only, and once the feed changes it,
+  // running it asks first.
+  await s.exec(`[...document.querySelectorAll(".sidebar-nav button")].find((b) => b.innerText.startsWith("Hosts")).click(); return true`);
+  await s.wait(() => s.exec(`return document.querySelector(".panel.page h1")?.innerText === "Hosts" || null`), "the Hosts page");
+  await s.addFrom("Feed URL…");
+  await s.waitText("Add a feed", ".cloud-adding", 30000);
+  await s.typeLabelled("Address", process.env.E2E_HOST_FEED);
+  await s.typeLabelled("Token", "wrong-token");
+  await s.clickButton("Add and read the feed");
+  await s.waitText("refused the token", ".cloud-page > .error", 30000);
+  await s.typeLabelled("Token", process.env.E2E_HOST_FEED_TOKEN);
+  await s.clickButton("Add and read the feed");
+  // Titles are uppercased by CSS (innerText follows it).
+  const feedCard = `[...document.querySelectorAll(".cloud-source")].find((x) => x.innerText.toLowerCase().includes("e2e operations"))`;
+  const feedAdded = await s
+    .wait(
+      () => s.exec(`return ${feedCard}?.innerText.includes("2 hosts added") ? "ok" : document.querySelector(".cloud-page > .error, .cloud-adding .error")?.innerText || null`),
+      "the feed source",
+      30000,
+    )
+    .catch(async (e) => {
+      await s.screenshot(`${shots}/feed-not-added.png`);
+      throw e;
+    });
+  assert.equal(feedAdded, "ok", `adding the feed: ${feedAdded}`);
+  page = await s.exec(`return ${feedCard}.innerText`);
+  assert.match(page, /1 snippet added/);
+  assert.match(page, /Skipped: broken: the host name/);
+  assert.match(page, /token …cdef/);
+  assert.ok(!page.includes(process.env.E2E_HOST_FEED_TOKEN), "the token isn't shown");
+  await s.screenshot(`${shots}/feed-source.png`);
+  await s.clickButton("Close");
+  await s.exec(
+    `[...document.querySelectorAll(".sidebar .list li")].find((l) => l.querySelector(".row-title")?.innerText === "e2e-feed-web").querySelector(".row-main").click(); return true`,
+  );
+  await s.wait(
+    () =>
+      s.exec(
+        `if (document.querySelector("dialog.hostkey[open]")) throw new Error("asked to trust the feed's host");
+         const r = document.querySelector(".terminal:not(.xterm):not([hidden]) .xterm-rows"); return r && /[$#]\\s*$/m.test(r.innerText) ? true : null`,
+      ),
+    "a shell on the feed's host, nothing asked",
+    60000,
+  );
+  await s.exec(
+    `[...document.querySelectorAll(".sidebar .list li")].find((l) => l.querySelector(".row-title")?.innerText === "e2e-feed-wrong").querySelector(".row-main").click(); return true`,
+  );
+  // The terminal wraps mid-word: compared without whitespace.
+  const refusedText = await s
+    .wait(
+      () =>
+        s.exec(
+          `const r = (document.querySelector(".terminal:not(.xterm):not([hidden]) .xterm-rows")?.innerText ?? "").replace(/\\s+/g, "");
+           return r.includes("isn'toneE2Eoperationslistsforit:refused") ? r : null`,
+        ),
+      "the wrong key refused",
+      60000,
+    )
+    .catch(async (e) => {
+      await s.screenshot(`${shots}/feed-wrong-key.png`);
+      throw e;
+    });
+  assert.ok(!refusedText.includes("$"), "no shell on the wrongly listed host");
+  await s.click(".tab.active .close");
+  // Back to the session on e2e-feed-web: where snippets go.
+  await s.exec(`[...document.querySelectorAll(".tab")].find((t) => t.querySelector(".label")?.innerText === "e2e-feed-web").click(); return true`);
+  ok("added a feed (a wrong token said first): its host connected with the key the feed lists, one listed with another key was refused, an invalid entry skipped");
+
+  // Its snippet, from the Snippets page into the session on e2e-feed-web.
+  await s.exec(`[...document.querySelectorAll(".sidebar-nav button")].find((b) => b.innerText.startsWith("Snippets")).click(); return true`);
+  await s.wait(() => s.hasText(".panel .lname", "E2E hello"), "the feed's snippet");
+  const feedRow = `[...document.querySelectorAll(".panel.page [role=row]")].find((r) => r.innerText.includes("E2E hello"))`;
+  assert.match(await s.exec(`return ${feedRow}.innerText`), /E2E operations/i);
+  const runFeedSnippet = () =>
+    s.exec(`[...${feedRow}.querySelectorAll("button")].find((b) => b.innerText === "Run").click(); return true`);
+  await runFeedSnippet();
+  await s.wait(
+    () => s.exec(`const r = document.querySelector(".terminal:not(.xterm):not([hidden]) .xterm-rows"); return r && /^e2e-feed-one\s*$/m.test(r.innerText) ? true : null`),
+    "the snippet's output",
+    30000,
+  );
+  // Read-only: no Save, a copy instead.
+  await s.exec(`[...document.querySelectorAll(".sidebar-nav button")].find((b) => b.innerText.startsWith("Snippets")).click(); return true`);
+  await s.wait(() => s.hasText(".panel .lname", "E2E hello"), "the Snippets page again");
+  await s.exec(`${feedRow}.querySelector(".lnamebtn").click(); return true`);
+  await s.waitText("it changes there, and is read-only here", ".panel", 30000);
+  assert.ok(!(await s.exec(`return [...document.querySelectorAll(".panel button")].some((b) => b.innerText.startsWith("Save"))`)), "no Save");
+  await s.clickButton("Close");
+
+  // The feed changes the snippet: a refresh brings it, and running it asks first.
+  await fetch(`${new URL(process.env.E2E_HOST_FEED).origin}/e2e/next`, { method: "POST" });
+  await s.exec(`[...document.querySelectorAll(".sidebar-nav button")].find((b) => b.innerText.startsWith("Hosts")).click(); return true`);
+  await s.wait(() => s.exec(`return document.querySelector(".panel.page h1")?.innerText === "Hosts" || null`), "the Hosts page");
+  await s.addFrom("Clouds…");
+  await s.waitText("E2E operations", ".cloud-source", 30000);
+  await s.exec(`[...${feedCard}.querySelectorAll("button")].find((b) => b.innerText === "Refresh").click(); return true`);
+  await s.wait(() => s.exec(`return ${feedCard}?.innerText.match(/1 gone from the feed, 1 snippet changed/) ? true : null`), "the feed's next version", 30000);
+  await s.clickButton("Close");
+  await s.exec(`[...document.querySelectorAll(".sidebar-nav button")].find((b) => b.innerText.startsWith("Snippets")).click(); return true`);
+  await s.wait(() => s.hasText(".panel .lname", "E2E hello"), "the Snippets page");
+  await runFeedSnippet();
+  await s.waitText("E2E hello changed", "dialog.snippet-check", 30000);
+  assert.match(await s.exec(`return document.querySelector("dialog.snippet-check").innerText`), /Changed by E2E operations[\s\S]*echo e2e-feed-two/);
+  await s.screenshot(`${shots}/feed-snippet-changed.png`);
+  await s.clickButton("Run it");
+  await s.wait(
+    () => s.exec(`const r = document.querySelector(".terminal:not(.xterm):not([hidden]) .xterm-rows"); return r && /^e2e-feed-two\s*$/m.test(r.innerText) ? true : null`),
+    "the changed snippet's output",
+    30000,
+  );
+  // Sent once as it is now: the next run doesn't ask.
+  await s.exec(`[...document.querySelectorAll(".sidebar-nav button")].find((b) => b.innerText.startsWith("Snippets")).click(); return true`);
+  await s.wait(() => s.hasText(".panel .lname", "E2E hello"), "the Snippets page");
+  await runFeedSnippet();
+  await new Promise((r) => setTimeout(r, 1000));
+  assert.ok(!(await s.exec(`return !!document.querySelector("dialog.snippet-check[open]")`)), "not asked again");
+  await s.click(".tab.active .close");
+  ok("the feed's snippet ran, read-only with a copy offered; once the feed changed it, running it asked first (and only once)");
+
   // Several hosts at once: the CSV and Royal TS ones (nothing later uses them) into one group,
   // then both deleted.
   await s.exec(`[...document.querySelectorAll(".sidebar-nav button")].find((b) => b.innerText.startsWith("Hosts")).click(); return true`);

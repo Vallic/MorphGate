@@ -17,7 +17,9 @@ pub mod sftp;
 pub mod ssh_config;
 
 pub use agent::{AgentKey, AgentSource};
-pub use connection::{AsyncStream, Auth, BoxedStream, Connection, Dialer, Hop, HostKeyPrompt};
+pub use connection::{
+    AsyncStream, Auth, BoxedStream, Connection, Dialer, Hop, HostKeyPrompt, ListedKeys,
+};
 pub use error::Error;
 pub use forward::{Forward, Tunnel};
 pub use keys::KeyInfo;

@@ -117,6 +117,8 @@ pub fn hosts(provider: &str, machines: &[Machine], shape: &Shape) -> Shaped {
             state: (!m.running).then(|| m.state.clone()),
             key_name: m.key_name.clone(),
             via: through,
+            host_keys: Vec::new(),
+            tags: Vec::new(),
         });
     }
     out

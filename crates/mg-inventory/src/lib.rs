@@ -3,12 +3,14 @@
 //! never reach MorphGate's server.
 //!
 //! One module per provider (docs/features/cloud-sources.md): Vallic Cloud through its API; AWS,
-//! Google Cloud, Azure, Hetzner Cloud and DigitalOcean through their CLIs, as [`Machine`]s.
+//! Google Cloud, Azure, Hetzner Cloud and DigitalOcean through their CLIs, as [`Machine`]s; and
+//! feeds, documents a team publishes at a URL.
 
 pub mod aws;
 pub mod azure;
 pub mod cli;
 pub mod digitalocean;
+pub mod feed;
 pub mod gcp;
 pub mod hetzner;
 pub mod shape;
@@ -49,6 +51,11 @@ pub struct InventoryHost {
     /// Reached through its cloud (Session Manager, an Instance Connect Endpoint, IAP) rather
     /// than an address; `hostname` is then the instance's id or name.
     pub via: Option<Via>,
+    /// The server's host keys (`ssh-ed25519 AAAA…`), as its publisher knows them (feeds):
+    /// trusted for it without asking.
+    pub host_keys: Vec<String>,
+    /// Tags it comes with (feeds), added to the person's.
+    pub tags: Vec<String>,
 }
 
 /// How a machine is reached through its cloud: what the command needs (the app builds it).
@@ -131,6 +138,9 @@ pub enum Error {
     SignedOut(String),
     #[error("{0}")]
     Api(String),
+    /// A feed answered 401 or 403 to its token.
+    #[error("{0} refused the token")]
+    TokenRefused(String),
     /// A provider's CLI isn't on this device.
     #[error(
         "{0} isn't installed on this computer, or MorphGate can't find it: install it, or give its path in the source"

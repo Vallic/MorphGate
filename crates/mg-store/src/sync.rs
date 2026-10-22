@@ -759,8 +759,10 @@ impl LocalVault {
                     }
                     _ => None,
                 };
-                // The same content on both sides (say, both re-sealed it): nothing lost.
-                let same = local_data == copy.data;
+                // The same content on both sides (say, both re-sealed it), or what a cloud
+                // source decides on each (two refreshes): nothing of the person's lost.
+                let same = local_data == copy.data
+                    || source_decides(local_data.as_ref(), copy.data.as_ref());
                 if !same {
                     conflicts += 1;
                 }
@@ -955,6 +957,59 @@ type LocalRow = (
     Option<String>,
     Option<i64>,
 );
+
+/// Whether the local copy differs from the server's only in what a cloud source decides (each
+/// device refreshed it): no copy is kept, and the next refresh sets it again. A person's edit
+/// (a rename, a note, a tag, a key) still makes one.
+fn source_decides(local: Option<&ItemData>, remote: Option<&ItemData>) -> bool {
+    match (local, remote) {
+        (Some(ItemData::CloudSource(a)), Some(ItemData::CloudSource(b))) => a.same_but_refreshed(b),
+        // A feed's snippets are the feed's: nobody edits them here.
+        (
+            Some(ItemData::Snippet(crate::Snippet {
+                source: Some(_), ..
+            })),
+            _,
+        ) => true,
+        (Some(ItemData::Host(a)), Some(ItemData::Host(b))) => match (&a.source, &b.source) {
+            (Some(x), Some(y))
+                if x.source_ref == y.source_ref && x.external_id == y.external_id =>
+            {
+                persons(a) == persons(b)
+            }
+            _ => false,
+        },
+        _ => false,
+    }
+}
+
+/// What of a source's host is the person's; the rest follows the source.
+fn persons(h: &crate::Host) -> crate::Host {
+    let source = h.source.as_deref();
+    let following = source.is_some_and(|s| s.label == h.label);
+    let from_source = source.map(|s| s.tags.as_slice()).unwrap_or_default();
+    crate::Host {
+        label: if following {
+            String::new()
+        } else {
+            h.label.clone()
+        },
+        hostname: String::new(),
+        port: 0,
+        user: String::new(),
+        jump_ref: None,
+        login_command: None,
+        jump_command: None,
+        tags: h
+            .tags
+            .iter()
+            .filter(|t| !from_source.contains(t))
+            .cloned()
+            .collect(),
+        source: None,
+        ..h.clone()
+    }
+}
 
 fn mark_conflict(data: &mut ItemData) {
     const SUFFIX: &str = " (conflict)";
@@ -1879,6 +1934,114 @@ mod tests {
         assert_eq!(labels(&a), labels(&b), "both devices converge");
     }
 
+    /// Two devices refreshing the same cloud source: the hosts and snippets it made have the
+    /// same ids on both, and copies that differ only in what the source decides make no
+    /// "(conflict)" copy. A person's edit still does.
+    #[tokio::test]
+    async fn refreshes_on_two_devices_make_no_copies() {
+        use crate::{CloudSource, HostSource, SnippetSource};
+        let (a, b) = two_devices();
+        let server = Fake::default();
+        let source = CloudSource {
+            label: "Ops".into(),
+            provider: "feed".into(),
+            url: Some("https://ops.example/feed".into()),
+            token: Some("T".into()),
+            ..CloudSource::default()
+        };
+        let sid = a
+            .lock()
+            .unwrap()
+            .upsert(None, ItemData::CloudSource(source.clone()))
+            .unwrap()
+            .id;
+        sync(&a, &server).await;
+        sync(&b, &server).await;
+        let vault = a.lock().unwrap().items().unwrap()[0].vault_id.clone();
+        let kept = |hostname: &str, state: Option<&str>| {
+            let ItemData::Host(mut h) = host("web") else {
+                unreachable!()
+            };
+            h.hostname = hostname.into();
+            h.tags = vec!["prod".into()];
+            h.source = Some(Box::new(HostSource {
+                source_ref: sid.clone(),
+                external_id: "feed:web".into(),
+                label: "web".into(),
+                gone: false,
+                no_sftp: false,
+                no_forwarding: false,
+                state: state.map(str::to_owned),
+                reach: None,
+                host_keys: vec![],
+                tags: vec!["prod".into()],
+            }));
+            ItemData::Host(h)
+        };
+        let snippet = |body: &str| {
+            ItemData::Snippet(Snippet {
+                name: "Uptime".into(),
+                body: body.into(),
+                tags: vec![],
+                source: Some(SnippetSource {
+                    source_ref: sid.clone(),
+                    external_id: "feed:up".into(),
+                }),
+            })
+        };
+        let refreshed = |at: i64| {
+            ItemData::CloudSource(CloudSource {
+                refreshed_at: at,
+                ..source.clone()
+            })
+        };
+        let host_id = crate::derived_id(&[&vault, &sid, "host", "feed:web"]);
+        let snippet_id = crate::derived_id(&[&vault, &sid, "snippet", "feed:up"]);
+        // Both make them, a moment apart: the feed moved the host and changed the snippet.
+        for (v, hostname, body, at) in [
+            (&a, "10.0.0.1", "uptime", 100),
+            (&b, "10.0.0.2", "uptime -p", 101),
+        ] {
+            let mut v = v.lock().unwrap();
+            v.insert_in(&vault, &host_id, kept(hostname, None)).unwrap();
+            v.insert_in(&vault, &snippet_id, snippet(body)).unwrap();
+            v.upsert(Some(&sid), refreshed(at)).unwrap();
+        }
+        sync(&a, &server).await;
+        let r = sync(&b, &server).await;
+        assert_eq!(r.conflicts, 0);
+        sync(&a, &server).await;
+        let count = |v: &Mutex<LocalVault>| v.lock().unwrap().items().unwrap().len();
+        assert_eq!(
+            (count(&a), count(&b)),
+            (3, 3),
+            "no copies: {:?}",
+            labels(&b)
+        );
+
+        // A's person adds a note while B's refresh marks the host stopped: the note is kept.
+        let ItemData::Host(mut noted) = kept("10.0.0.1", None) else {
+            unreachable!()
+        };
+        noted.notes = "ask Ana first".into();
+        a.lock()
+            .unwrap()
+            .upsert(Some(&host_id), ItemData::Host(noted))
+            .unwrap();
+        b.lock()
+            .unwrap()
+            .upsert(Some(&host_id), kept("10.0.0.1", Some("stopped")))
+            .unwrap();
+        sync(&b, &server).await;
+        let r = sync(&a, &server).await;
+        assert_eq!(r.conflicts, 1);
+        assert!(
+            labels(&a).contains(&"web (conflict)".to_owned()),
+            "{:?}",
+            labels(&a)
+        );
+    }
+
     #[tokio::test]
     async fn edit_beats_delete_as_a_copy_and_delete_loses_to_edit() {
         let (a, b) = two_devices();
@@ -1904,6 +2067,7 @@ mod tests {
             name: "s".into(),
             body: "uptime".into(),
             tags: vec![],
+            source: None,
         });
         let sid = a.lock().unwrap().upsert(None, snip).unwrap().id;
         sync(&a, &server).await;
@@ -1916,6 +2080,7 @@ mod tests {
                     name: "s2".into(),
                     body: "w".into(),
                     tags: vec![],
+                    source: None,
                 }),
             )
             .unwrap();

@@ -197,7 +197,7 @@ function HostRows({ list, things, ...p }: HostRowsProps) {
                   <VaultTag vaults={p.vaults} id={h.vaultId} />
                   {h.source?.gone && (
                     <span className="kind-badge gone" title="Its cloud no longer lists it: it was kept, remove it if it's gone for good">
-                      gone from {PROVIDERS[h.source.provider || "vallic"]?.name ?? "its cloud"}
+                      gone from {h.source.provider === "feed" ? "its feed" : (PROVIDERS[h.source.provider || "vallic"]?.name ?? "its cloud")}
                     </span>
                   )}
                   {h.source?.state && !h.source.gone && (
@@ -248,7 +248,8 @@ interface HostsProps {
   onOpenGroup: (id: string) => void;
   /** Hosts from OpenSSH's configuration (desktop). */
   onImport: () => void;
-  onCloud: () => void;
+  /** Clouds, or straight to adding a feed. */
+  onCloud: (add?: "feed") => void;
   /** Quick connect (desktop, where this page is home once there are hosts). */
   onQuickConnect?: () => void;
   /** After a change made here (several deleted, moved to a group). */
@@ -289,7 +290,8 @@ export function HostsPage(p: HostsProps) {
             <AddFrom
               items={[
                 { label: "Import…", sub: "OpenSSH's config, PuTTY, a CSV file, Royal TS", onClick: p.onImport },
-                { label: "Clouds…", sub: "Machines from AWS, DigitalOcean, Vallic Cloud…", onClick: p.onCloud },
+                { label: "Clouds…", sub: "Machines from AWS, DigitalOcean, Vallic Cloud…", onClick: () => p.onCloud() },
+                { label: "Feed URL…", sub: "Hosts and snippets your team publishes at an address", onClick: () => p.onCloud("feed") },
               ]}
             />
           )}
@@ -843,7 +845,7 @@ interface SnippetsProps {
   onOpen: (id?: string) => void;
   /** From a CSV file. */
   onImport: () => void;
-  onSend: (body: string, run: boolean) => void;
+  onSend: (body: string, run: boolean, snippet?: SnippetView) => void;
   onChanged: () => void;
   onClose: () => void;
 }
@@ -904,21 +906,22 @@ export function SnippetsPage(p: SnippetsProps) {
                       <>
                         {p.target && (
                           <>
-                            <TextAction onClick={() => p.onSend(sn.body, false)}>Paste</TextAction>
-                            <TextAction onClick={() => p.onSend(sn.body, true)}>Run</TextAction>
+                            <TextAction onClick={() => p.onSend(sn.body, false, sn)}>Paste</TextAction>
+                            <TextAction onClick={() => p.onSend(sn.body, true, sn)}>Run</TextAction>
                           </>
                         )}
-                        <IconAction icon="edit" label={`Edit ${sn.name}`} onClick={() => p.onOpen(sn.id)} />
+                        <IconAction icon="edit" label={`${sn.source ? "Open" : "Edit"} ${sn.name}`} onClick={() => p.onOpen(sn.id)} />
                       </>
                     }
                   >
                     <NameCell
                       pick={pickOf(sel, sn.id, sn.name)}
                       onOpen={() => p.onOpen(sn.id)}
-                      title={`Edit ${sn.name}`}
+                      title={`${sn.source ? "Open" : "Edit"} ${sn.name}`}
                       lead={<Icon name="snippet" size={15} />}
                       name={sn.name}
                       beside={<VaultTag vaults={p.vaults} id={sn.vaultId} />}
+                      sub={sn.source ? `From ${sn.source.label} (read-only)` : undefined}
                     />
                     <Cell className="lstack">
                       <span className="mono trunc">{lines[0]}</span>

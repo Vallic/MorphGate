@@ -1,7 +1,7 @@
 //! Changes to several items at once, from the lists' selections: deleting them, and putting hosts
 //! in a group. Each item is changed as on its own; the ones that can't be are said, not hidden.
 
-use mg_store::{ItemData, LocalVault};
+use mg_store::{Item, ItemData, LocalVault, Snippet};
 use serde::Serialize;
 use tauri::State;
 
@@ -36,6 +36,18 @@ pub(crate) fn delete_items(v: &mut LocalVault, ids: &[String]) -> BulkResult {
     let mut left: Vec<String> = Vec::new();
     for id in ids {
         match v.item(id) {
+            // A feed's snippets go when the feed drops them.
+            Ok(Item {
+                data:
+                    ItemData::Snippet(Snippet {
+                        source: Some(_),
+                        name,
+                        ..
+                    }),
+                ..
+            }) => result.refused.push(format!(
+                "\"{name}\" comes from a feed: it goes when the feed drops it"
+            )),
             Ok(item) if plain(&item.data) => left.push(id.clone()),
             Ok(_) => result
                 .refused
@@ -209,6 +221,7 @@ mod tests {
                     name: "df".into(),
                     body: "df -h".into(),
                     tags: vec![],
+                    source: None,
                 }),
             )
             .unwrap()

@@ -98,24 +98,26 @@ They cover tls-auth, tls-crypt, TCP, CBC with the PRF, LZO and renegotiation ([V
 apps/desktop/e2e/run.sh                                   # builds test packages (about 10 minutes), then every scenario
 E2E_SKIP_BUILD=1 apps/desktop/e2e/run.sh                  # reuses the last build
 E2E_SKIP_BUILD=1 E2E_ONLY="teams mobile" apps/desktop/e2e/run.sh   # appimage, rpm, deb, teams, layout, mobile
+E2E_SKIP_BUILD=1 E2E_ONLY=demo apps/desktop/e2e/run.sh    # only when asked: the README's demo
 ```
 
 | Scenario | Checks |
 | --- | --- |
-| `appimage.mjs` | A vault; SSH to the throwaway sshd; imports from `~/.ssh/config`, PuTTY (`.ppk`), a Termius-style CSV and Royal TS; Vallic Cloud through a stand-in console; user and host certificates; proxy and login commands; groups, bulk move and delete; an agent and agent forwarding; split panes and broadcast; a `morphgate://connect` link from a second launch; appearance; About and the license list; a tampered update refused, the signed update installed and the same vault unlocked in the new version |
+| `appimage.mjs` | A vault; SSH to the throwaway sshd; imports from `~/.ssh/config`, PuTTY (`.ppk`), a Termius-style CSV and Royal TS; Vallic Cloud, AWS, DigitalOcean and a feed through stand-ins; user and host certificates; proxy and login commands; groups, bulk move and delete; an agent and agent forwarding; split panes and broadcast; a `morphgate://connect` link from a second launch; appearance; About and the license list; a tampered update refused, the signed update installed and the same vault unlocked in the new version |
 | `package.mjs` (deb, rpm) | The desktop entry handles `morphgate://`; the binary knows its package, finds the update and warns about the administrator password |
 | `teams.mjs` | Three apps (`E2E_PEOPLE="alice bob carol"`; Carol's app is Bob's second device) and the reference server: sync, an organization, invites with fingerprint checks, shared edits, moving items, published member keys, revocation and rotation, policies, the activity log and its export, device approval, attachments, offboarding against the sshd, shared credentials and tmux sessions, single sign-on against `idp.mjs`, the data export, signing a device out, deleting accounts |
 | `layout.mjs` | Every page filled, at 860, 1024, 1280 and 1600 px: nothing overlaps or leaves its column; closing editors and pages returns where they came from |
 | `mobile.mjs` | The phone layout in a 390 × 844 window ([Platforms and mobile](features/platforms-and-mobile.md#tests)) |
+| `demo.mjs` (`E2E_ONLY=demo` only) | The README's demo: the AppImage with a few hosts in groups. Its Hosts page is captured as shapes (`tools/readme-demo/snapshot.js`: boxes, text and icons where the layout put them), web-1 is clicked, and its session view is captured and recorded by the app's session recording (the login command runs a clean bash with a demo prompt in a demo home). `tools/readme-demo/demo-svg.mjs` draws both scenes, a pointer's click and the replayed session (xterm.js headless; each row's states are a strip a CSS animation steps through) as one animated SVG in the app's fonts. This machine's user and loopback address are swapped for demo ones, and nothing that still shows them or your home folder is saved. Copy `target/e2e/run-<time>/demo/morphgate.svg` to `assets/demo/morphgate.svg` |
 
 What `run.sh` sets up, all on loopback and on free ports (`E2E_SSH_PORT`, `E2E_FEED_PORT`, `E2E_SYNC_PORT`, `E2E_IDP_PORT`, `E2E_VALLIC_PORT`, `E2E_DRIVER_PORT` pin them):
 
 | Piece | What it is |
 | --- | --- |
 | Test packages | The current version (AppImage, deb, rpm) and the next patch version (AppImage), signed with a throwaway update key whose public half replaces the real one, and allowed to fetch updates over plain HTTP. Moved out of `target/release/bundle` to `target/e2e/packages/`; never publish them |
-| sshd | On 127.0.0.1, 127.0.0.2 and 127.0.0.3, key login for the current user, a user CA it trusts and a host certificate for 127.0.0.3; SFTP starts in the run's `sshd/home`, whose `authorized_keys` is the one sshd reads, so offboarding never edits your real `~/.ssh` |
+| sshd | On 127.0.0.1, 127.0.0.2, 127.0.0.3 and 127.0.0.4, key login for the current user, a user CA it trusts and a host certificate for 127.0.0.3; SFTP starts in the run's `sshd/home`, whose `authorized_keys` is the one sshd reads, so offboarding never edits your real `~/.ssh` |
 | `feed.mjs` | The update feed (`MORPHGATE_UPDATE_ENDPOINT`), serving a good and a tampered `latest.json` |
-| `vallic-console.mjs`, `clouds/aws` | Stand-ins for the Vallic console and the `aws` CLI, whose machine is the sshd |
+| `vallic-console.mjs`, `clouds/aws`, `clouds/doctl`, `host-feed.mjs` | Stand-ins for the Vallic console, the `aws` and `doctl` CLIs and a feed (`E2E_HOST_FEED`, with its token in `E2E_HOST_FEED_TOKEN`), whose machines are the sshd (the feed's on 127.0.0.4, with its host key listed) |
 | `vault-sync-server`, `idp.mjs` | The reference server (open registration, invite codes instead of mail) and an OpenID provider, for `teams` and `layout` |
 | `session.sh` | One `tauri-driver` per person, each with its own `HOME` and XDG folders in the run directory, so your vault, session bus and keyring are never touched |
 

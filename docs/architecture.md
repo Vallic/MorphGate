@@ -39,7 +39,7 @@ How the MorphGate app is put together: the webview, the Tauri commands behind it
 | `mg-ssh` | `crates/mg-ssh` | One `Session` per connection on `russh`: PTY shell, authentication, host-key pinning, agents, port forwards, SFTP, `ssh_config` parsing. See [SSH connections](features/ssh-connections.md) |
 | `mg-vpn` | `crates/mg-vpn` | VPN tunnels that run inside the app with their own smoltcp stack; `Tunnel::connect` returns a byte stream to a host behind the VPN. See [VPN](features/vpn.md) |
 | `mg-presence` | `crates/mg-presence` | Asks the OS to confirm the user is there before the keychain unlock. See [Keychain and biometric unlock](features/device-unlock.md) |
-| `mg-inventory` | `crates/mg-inventory` | Lists machines from Vallic Cloud (API) and AWS, Google Cloud, Azure, Hetzner Cloud, DigitalOcean (their CLIs). See [Cloud sources](features/cloud-sources.md) |
+| `mg-inventory` | `crates/mg-inventory` | Lists machines from Vallic Cloud (API) and AWS, Google Cloud, Azure, Hetzner Cloud, DigitalOcean (their CLIs), and reads feeds (hosts and snippets at a URL). See [Cloud sources](features/cloud-sources.md) |
 | Reference server | `server/` (`vault-sync-server`) | A self-hostable `vault-sync/v1` server. See [Reference server](features/reference-server.md) |
 | Conformance suite | `tools/vault-conform` | Checks any `vault-sync/v1` server against the protocol, endpoint by endpoint. See [Development](development.md#conformance-suite) |
 
@@ -172,7 +172,7 @@ See [Sync](features/sync.md), [Account and devices](features/account-and-devices
 | The sync server | Items are signed and checked before decrypting; a revision older than one already seen is an error; KDF parameters below the minimum are refused; shared vault keys count only when signed by a member this device verified, and a changed member key is a hard error |
 | Other members of a shared vault | A command that arrives in a vault (a proxy command, a certificate renewal command) runs only after this device allowed it, by its exact text |
 | The webview | Private keys and passwords go into Rust and never come back out to the webview |
-| Its own server, with cloud credentials | Cloud provider calls go from the device to the provider; the credentials never reach the sync server |
+| Its own server, with cloud credentials | Cloud provider calls go from the device to the provider; the credentials never reach the sync server (a feed's read-only token travels in the vault, end-to-end encrypted) |
 | Links | A `morphgate://` link only opens a screen, filled in; it never joins, connects or changes anything, and passwords or keys in it are ignored |
 
 What it relies on: the OS user account (the keychain unlock and the presence check keep someone at an unlocked computer out, not malware running as the user) and the host keys the user accepts.

@@ -263,6 +263,8 @@ export interface HostView {
     state: string | null;
     /** Reached through its cloud. */
     via: CloudReachKind | null;
+    /** The feed that lists its host keys (they decide, rather than a pinned key), if one does. */
+    listedBy: string | null;
   } | null;
   groupId: string | null;
   /** Shared credentials it signs in with. */
@@ -425,6 +427,10 @@ export interface SnippetView {
   body: string;
   tags: string[];
   updatedAt: number;
+  /** The feed that keeps it (it's read-only here), if one does. */
+  source: { sourceId: string; label: string } | null;
+  /** Its feed changed the body since this device last pasted or ran it: ask first. */
+  changed: boolean;
 }
 
 export interface SnippetInput {
@@ -463,6 +469,8 @@ export const snippets = {
   list: () => invoke<SnippetView[]>("snippets_list"),
   save: (input: SnippetInput) => invoke<SnippetView>("snippet_save", { input }),
   remove: (id: string) => invoke<void>("snippet_delete", { id }),
+  /** This device pasted or ran a feed's snippet (what a later change of it is compared with). */
+  sent: (id: string) => invoke<void>("snippet_sent", { id }),
   /** The snippets in a CSV file's text (Name, Command, Tags columns); `name` is the file's. */
   readCsv: (name: string, text: string) => invoke<SnippetCsv>("snippets_read_csv", { name, text }),
   /** Saves an example of that CSV in the downloads folder; says where. */
@@ -1130,7 +1138,7 @@ export interface Reach {
 
 /** A secret the member could read: change it after they leave. */
 export interface Secret {
-  kind: "password" | "key" | "vpn";
+  kind: "password" | "key" | "vpn" | "feed";
   itemId: string;
   label: string;
   vaultName: string;
@@ -1443,7 +1451,7 @@ export const openLink = (url: string) => invoke<void>("open_link", { url });
 
 // ------------------------------------------------------------------ Cloud sources
 
-export type CloudProvider = "vallic" | "aws" | "gcp" | "azure" | "hetzner" | "digitalocean";
+export type CloudProvider = "vallic" | "aws" | "gcp" | "azure" | "hetzner" | "digitalocean" | "feed";
 
 /** Reaching a machine through its cloud rather than an address. */
 export type CloudReachKind = "aws-ssm" | "aws-eice" | "gcp-iap";
@@ -1462,10 +1470,12 @@ export const PROVIDERS: Record<CloudProvider, { name: string; cli: string | null
   azure: { name: "Azure", cli: "az" },
   hetzner: { name: "Hetzner Cloud", cli: "hcloud" },
   digitalocean: { name: "DigitalOcean", cli: "doctl" },
+  feed: { name: "Feed", cli: null },
 };
 
-/** Hosts kept in step with a cloud: Vallic Cloud (each device signs in itself), or AWS, Google
- * Cloud and Azure (listed with their CLI on this device). */
+/** Hosts kept in step with a cloud: Vallic Cloud (each device signs in itself), AWS, Google
+ * Cloud, Azure, Hetzner Cloud and DigitalOcean (listed with their CLI on this device), or a feed
+ * (read from its URL with the token the source holds). */
 export interface CloudSource {
   id: string;
   vaultId: string;
@@ -1496,6 +1506,21 @@ export interface CloudSource {
   groupTag: string | null;
   /** Where this device runs the CLI from, when it was given. */
   cliPath: string | null;
+  /** A feed's address. */
+  url: string | null;
+  /** The end of a feed's token (`…f3a9`); the rest is never shown. */
+  tokenEnd: string | null;
+  /** Snippets a feed keeps. */
+  snippets: number;
+  /** Why the last refresh on this device failed (an automatic one included). */
+  failed: string | null;
+}
+
+/** A feed's name, address and token (empty or null when changing it: the token stays). */
+export interface FeedInput {
+  label?: string | null;
+  url: string;
+  token?: string | null;
 }
 
 /** What a CLI source lists and how its machines become hosts. */
@@ -1526,8 +1551,12 @@ export interface CloudRefresh {
   withoutShell: string[];
   /** Machines without the address the source uses. */
   withoutAddress: string[];
-  /** Regions, projects or subscriptions that couldn't be listed, and why. */
+  /** Regions, projects or subscriptions that couldn't be listed, and why; a feed's entries left out. */
   skipped: string[];
+  /** A feed's snippets. */
+  snippetsAdded: number;
+  snippetsUpdated: number;
+  snippetsRemoved: number;
 }
 
 export type SignInStatus =
@@ -1555,6 +1584,12 @@ export const cloud = {
   add: (provider: CloudProvider, settings: SourceSettings, opts: { vaultId?: string | null; keyId?: string | null } = {}) =>
     invoke<{ source: CloudSource; refresh: CloudRefresh }>("cloud_source_add", { provider, settings, vaultId: opts.vaultId ?? null, keyId: opts.keyId ?? null }),
   settings: (sourceId: string, settings: SourceSettings) => invoke<void>("cloud_source_settings", { sourceId, settings }),
+  /** A feed, read once with its token before it's kept, then brought in. */
+  addFeed: (input: FeedInput, opts: { vaultId?: string | null; keyId?: string | null } = {}) =>
+    invoke<{ source: CloudSource; refresh: CloudRefresh }>("cloud_feed_add", { input, vaultId: opts.vaultId ?? null, keyId: opts.keyId ?? null }),
+  feedSettings: (sourceId: string, input: FeedInput) => invoke<void>("cloud_feed_settings", { sourceId, input }),
+  /** Refreshes the feeds not refreshed in the last 10 minutes (desktop); how many it did. */
+  autoRefresh: () => invoke<number>("cloud_auto_refresh"),
 };
 
 export const errorText = (e: unknown) => (typeof e === "string" ? e : e instanceof Error ? e.message : String(e));

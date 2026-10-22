@@ -205,6 +205,7 @@ From the code's own statement: the server copy always wins for an item id, and a
 | Local | Server | Result |
 | --- | --- | --- |
 | An edit | An edit with the same content (both re-sealed it, say) | No copy, no conflict |
+| A cloud source's change | The same source's change from another device (both refreshed it) | No copy, no conflict, when the copies differ only in what the source decides (`source_decides`): a source item only in `refreshed_at`; a host it keeps (same `source_ref` and `external_id`) only in label while it follows the source, host name, port, user, jump host, login and jump commands, the source's tags and the `source` marker; a feed's snippet, whatever it differs in. The next refresh sets it again. A person's edit (a rename, a note, a tag, a key) still makes a copy |
 | An edit | A different edit | The server's version under the id; the local one as a new item (new ULID, `rev` 0, dirty), pushed like any new item |
 | An edit | A deletion that got there first | The item is deleted; the edit survives as a copy |
 | A deletion | An edit that got there first | No copy; the item comes back with the server's edit |

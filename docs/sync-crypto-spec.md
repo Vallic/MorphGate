@@ -138,17 +138,17 @@ Serialized as JSON with a `type` tag and the write's `item_version` (Item histor
 
 | Type | Fields | Status |
 | --- | --- | --- |
-| `host` | label, hostname, port, user, auth (`password {password?}` \| `key {key_ref}` \| `agent`), jump_ref? (host to tunnel through, chains allowed, no loops, ≤ 8 deep), vpn_ref? (VPN for the first hop), theme_ref? (a `terminal_theme` in the same vault, or `builtin:<id>` for one built into the app), record_sessions?, keep_session? (attach to a tmux session on the server), group_ref? (a `host_group`), identity_ref? (an `identity`, instead of user and auth; user may then be empty), tags, notes | Implemented |
+| `host` | label, hostname, port, user, auth (`password {password?}` \| `key {key_ref}` \| `agent`), jump_ref? (host to tunnel through, chains allowed, no loops, ≤ 8 deep), vpn_ref? (VPN for the first hop), theme_ref? (a `terminal_theme` in the same vault, or `builtin:<id>` for one built into the app), record_sessions?, keep_session? (attach to a tmux session on the server), group_ref? (a `host_group`), identity_ref? (an `identity`, instead of user and auth; user may then be empty), tags, notes, source? (the `cloud_source` that keeps it: source_ref, external_id, label, gone?, state?, host_keys? (its server's keys, listed by a feed), tags? (the ones the feed gave it)) | Implemented |
 | `vpn` | label, vpn (`wireguard {config}`: wg-quick text incl. private key) | Implemented |
 | `ssh_key` | label, private_key (OpenSSH/PEM, as imported), passphrase?, public_key, algorithm, fingerprint | Implemented |
-| `snippet` | name, body, tags | Implemented (storage only) |
+| `snippet` | name, body, tags, source? (the feed that keeps it: source_ref, external_id) | Implemented (storage only) |
 | `identity` | label, user, auth (as a host's) — shared credentials hosts refer to | Implemented |
 | `host_group` | name, identity_ref?, jump_ref?, vpn_ref?, theme_ref?, keep_session? — a host takes what it leaves empty from its group (credentials only when its user is empty); deleting a group makes those values the hosts' own | Implemented |
 | `attachment` | name, host_ref?, blob, size (see Blobs) | Implemented |
 | `session_log` | see Blobs | Implemented |
 | `port_forward` | label, host_ref, rule (`local` \| `remote` {bind_host, bind_port, target_host, target_port} \| `dynamic` {bind_host, bind_port}) | Implemented |
 | `known_host` | host pattern, key type, public key | Planned (today: local known_hosts file) |
-| `cloud_source` | label, provider, endpoint?, key_ref?, account — a cloud account whose machines become hosts, kept in step with it ([cloud sources](features/cloud-sources.md)) | Implemented |
+| `cloud_source` | label, provider, endpoint?, key_ref?, account, url?, token? — a cloud account or feed whose machines become hosts, kept in step with it ([cloud sources](features/cloud-sources.md)) | Implemented |
 | `host_ca` | label, public_key, hosts (patterns) — a CA whose signed host keys are trusted for those hosts (`@cert-authority`) | Implemented |
 | `terminal_theme` | name, background, foreground, cursor, cursor_accent, selection_background, selection_foreground?, ansi (16 colors), all `#rrggbb`; imported from Ghostty, Alacritty, iTerm2 or Windows Terminal theme files | Implemented |
 | `member_key` | account_id, public_key (OpenSSH `type base64`), label, sig (member key signature, hex) — only in an organization's directory vault | Implemented |

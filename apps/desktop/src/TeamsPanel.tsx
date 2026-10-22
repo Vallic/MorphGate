@@ -2029,7 +2029,7 @@ function Offboard({ org, member, onBack, onChanged }: { org: OrgInfo; member: Me
 
           <div className="stack">
             <h2 className="section-title">4. Change what they could see</h2>
-            {summary.secrets.length === 0 && <p className="hint">No saved passwords, SSH keys or VPN profiles in those vaults.</p>}
+            {summary.secrets.length === 0 && <p className="hint">No saved passwords, SSH keys, VPN profiles or feed tokens in those vaults.</p>}
             <ul className="device-list">
               {summary.secrets.map((s) => {
                 const r = replaced[s.itemId];
@@ -2038,7 +2038,9 @@ function Offboard({ org, member, onBack, onChanged }: { org: OrgInfo; member: Me
                     <label className="check grow">
                       <input type="checkbox" checked={done.has(s.itemId)} onChange={() => tick(s.itemId)} />
                       <span>
-                        {s.kind === "password" ? "Password of" : s.kind === "key" ? "SSH key" : "VPN profile"} <strong>{s.label}</strong>
+                        {s.kind === "password" ? "Password of" : s.kind === "key" ? "SSH key" : s.kind === "feed" ? "Rotate the token for" : "VPN profile"}{" "}
+                        <strong>{s.label}</strong>
+                        {s.kind === "feed" && " (a feed: change it where the feed is published, then in the source's settings)"}
                         <small>
                           {" "}
                           · {s.vaultName}

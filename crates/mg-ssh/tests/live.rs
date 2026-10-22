@@ -79,6 +79,7 @@ fn opts(env: &Env, auth: Auth) -> ConnectOptions {
         connect_timeout: Duration::from_secs(10),
         jumps: vec![],
         via_command: None,
+        listed_keys: None,
         dialer: None,
         forward_agent: None,
     }
@@ -224,6 +225,87 @@ async fn changed_host_key_fails_closed() {
     );
 }
 
+/// Host keys a feed lists for a host decide instead of known_hosts: the server's key connects
+/// without asking (over a stale pin, too) and isn't written down; another one is refused.
+#[tokio::test]
+#[ignore = "needs MG_TEST_SSH"]
+async fn listed_host_keys_decide() {
+    let Some(env) = env() else { return };
+    // The server's key, learned the usual way.
+    let dir = tempfile::tempdir().unwrap();
+    let learned = dir.path().join("learned");
+    let prompt = Arc::new(CountingPrompt {
+        accept: true,
+        ..Default::default()
+    });
+    let (s, ev) = Session::connect(
+        opts(&env, auth(&env)),
+        Arc::new(KnownHosts::new(&learned)),
+        prompt,
+    )
+    .await
+    .unwrap();
+    run(s, ev, "true").await;
+    let line = std::fs::read_to_string(&learned).unwrap();
+    let key: String = line
+        .split_whitespace()
+        .skip(1)
+        .take(2)
+        .collect::<Vec<_>>()
+        .join(" ");
+    let listed = |key: &str| {
+        let mut o = opts(&env, auth(&env));
+        o.listed_keys = Some(mg_ssh::ListedKeys {
+            keys: vec![key.to_owned()],
+            from: "Ops".into(),
+        });
+        o
+    };
+
+    let fresh = dir.path().join("fresh");
+    let never = Arc::new(CountingPrompt::default());
+    let (s, ev) = Session::connect(
+        listed(&key),
+        Arc::new(KnownHosts::new(&fresh)),
+        never.clone(),
+    )
+    .await
+    .unwrap();
+    run(s, ev, "true").await;
+    assert!(!fresh.exists(), "a listed key isn't written down");
+
+    let stale = dir.path().join("stale");
+    let entry = if env.port == 22 {
+        env.host.clone()
+    } else {
+        format!("[{}]:{}", env.host, env.port)
+    };
+    let other = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDRbMaf7RI+oSkPOCPrFjPoMWJEIu96Drte4Q3r9OQYR";
+    std::fs::write(&stale, format!("{entry} {other}\n")).unwrap();
+    let (s, ev) = Session::connect(
+        listed(&key),
+        Arc::new(KnownHosts::new(&stale)),
+        never.clone(),
+    )
+    .await
+    .unwrap();
+    run(s, ev, "true").await;
+
+    let err = Session::connect(
+        listed(other),
+        Arc::new(KnownHosts::new(&fresh)),
+        never.clone(),
+    )
+    .await
+    .err()
+    .unwrap();
+    assert!(
+        matches!(&err, Error::HostKeyNotListed { from, .. } if from == "Ops"),
+        "{err}"
+    );
+    assert_eq!(never.calls.load(Ordering::SeqCst), 0, "nothing asked");
+}
+
 #[tokio::test]
 #[ignore = "needs MG_TEST_SSH"]
 async fn wrong_password_fails() {
@@ -314,6 +396,7 @@ fn hop(env: &Env) -> Hop {
         user: env.user.clone(),
         auth: auth(env),
         via_command: None,
+        listed_keys: None,
     }
 }
 

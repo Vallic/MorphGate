@@ -1,21 +1,24 @@
 //! Cloud sources (docs/features/cloud-sources.md): hosts kept in step with Vallic Cloud, AWS,
-//! Google Cloud, Azure, Hetzner Cloud and DigitalOcean. For Vallic each device signs in itself (the
-//! console's device flow) and keeps its sign-in on the device; the others are listed with the
-//! provider's CLI as this device has it set up. The vault syncs the source and the hosts it made. A
-//! refresh brings the provider's hosts in: what the provider decides (address, port, user, login
-//! and jump commands, the label until it's renamed here) follows it, what's the person's (key,
-//! scheme, tags, notes, group) stays; a host the provider no longer lists is marked gone, not
-//! deleted.
+//! Google Cloud, Azure, Hetzner Cloud and DigitalOcean, or a feed. For Vallic each device signs in
+//! itself (the console's device flow) and keeps its sign-in on the device; the others are listed
+//! with the provider's CLI as this device has it set up; a feed is read from its URL with the
+//! token the source holds. The vault syncs the source and the hosts it made. A refresh brings the
+//! provider's hosts in: what the provider decides (address, port, user, login and jump commands,
+//! the label until it's renamed here) follows it, what's the person's (key, scheme, tags, notes,
+//! group) stays; a host the provider no longer lists is marked gone, not deleted. A feed's
+//! snippets follow it whole.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use mg_inventory::cli::Cli;
+use mg_inventory::feed::{self, FeedSnippet};
 use mg_inventory::shape::Shape;
 use mg_inventory::vallic::{DeviceAuth, Poll, Session, Vallic};
 use mg_inventory::{InventoryHost, aws, azure, gcp};
 use mg_store::{
-    CloudReach, CloudSource, Host, HostAuth, HostGroup, HostSource, ItemData, LocalVault,
+    Access, CloudReach, CloudSource, Host, HostAuth, HostGroup, HostSource, Item, ItemData,
+    LocalVault, Snippet, SnippetSource,
 };
 use serde::{Deserialize, Serialize};
 use tauri::State;
@@ -23,9 +26,32 @@ use tauri::State;
 use crate::vault::{VaultState, save};
 
 /// One cloud operation at a time on this device: a refresh token is used once, and two refreshes
-/// at once would replay it, which ends the sign-in.
+/// at once would replay it, which ends the sign-in. And why the last refresh of a source failed
+/// here, for its card (an automatic one has nowhere else to say it).
 #[derive(Default)]
-pub struct CloudState(tokio::sync::Mutex<()>);
+pub struct CloudState {
+    one: tokio::sync::Mutex<()>,
+    failed: std::sync::Mutex<HashMap<String, String>>,
+}
+
+impl CloudState {
+    fn note(&self, source_id: &str, result: &Result<RefreshResult, String>) {
+        if let Ok(mut failed) = self.failed.lock() {
+            match result {
+                Ok(_) => failed.remove(source_id),
+                Err(e) => failed.insert(source_id.to_owned(), e.clone()),
+            };
+        }
+    }
+
+    fn failure(&self, source_id: &str) -> Option<String> {
+        self.failed.lock().ok()?.get(source_id).cloned()
+    }
+}
+
+/// A feed's source refreshes itself on desktops: at unlock, then every 15 minutes while unlocked
+/// (the app's timer), unless it was refreshed (on any device) in the last 10.
+const FEED_FRESH_SECS: i64 = 10 * 60;
 
 /// Where this device keeps its sign-in to a source.
 fn secret_name(source_id: &str) -> String {
@@ -99,9 +125,27 @@ pub struct SourceView {
     group_tag: Option<String>,
     /// Where this device runs the provider's CLI from, when it was given.
     cli_path: Option<String>,
+    /// A feed's address.
+    url: Option<String>,
+    /// The end of a feed's token, to tell tokens apart (`…f3a9`); the rest is never shown.
+    token_end: Option<String>,
+    /// Snippets a feed keeps.
+    snippets: usize,
+    /// Why the last refresh on this device failed (an automatic one included).
+    failed: Option<String>,
 }
 
-fn views(v: &LocalVault) -> Result<Vec<SourceView>, String> {
+/// The token as the source shows it: its last 4 characters where it's long enough to spare them.
+fn token_end(token: &str) -> String {
+    let chars: Vec<char> = token.trim().chars().collect();
+    if chars.len() >= 16 {
+        format!("…{}", chars[chars.len() - 4..].iter().collect::<String>())
+    } else {
+        "…".into()
+    }
+}
+
+fn views(v: &LocalVault, cloud: &CloudState) -> Result<Vec<SourceView>, String> {
     let items = v.items().map_err(|e| e.to_string())?;
     let mut out = Vec::new();
     for item in &items {
@@ -113,6 +157,12 @@ fn views(v: &LocalVault) -> Result<Vec<SourceView>, String> {
             _ => None,
         });
         let (hosts, gone) = kept.fold((0, 0), |(n, g), s| (n + 1, g + usize::from(s.gone)));
+        let snippets = items
+            .iter()
+            .filter(|i| {
+                matches!(&i.data, ItemData::Snippet(Snippet { source: Some(s), .. }) if s.source_ref == item.id)
+            })
+            .count();
         out.push(SourceView {
             id: item.id.clone(),
             vault_id: item.vault_id.clone(),
@@ -136,6 +186,10 @@ fn views(v: &LocalVault) -> Result<Vec<SourceView>, String> {
             user: c.user.clone(),
             group_tag: c.group_tag.clone(),
             cli_path: v.setting(&cli_setting(&c.provider)).ok().flatten(),
+            url: c.url.clone(),
+            token_end: c.token.as_deref().map(token_end),
+            snippets,
+            failed: cloud.failure(&item.id),
         });
     }
     out.sort_by(|a, b| a.label.cmp(&b.label));
@@ -143,8 +197,11 @@ fn views(v: &LocalVault) -> Result<Vec<SourceView>, String> {
 }
 
 #[tauri::command]
-pub fn cloud_sources(vault: State<'_, VaultState>) -> Result<Vec<SourceView>, String> {
-    views(&*vault.guard()?)
+pub fn cloud_sources(
+    vault: State<'_, VaultState>,
+    cloud: State<'_, CloudState>,
+) -> Result<Vec<SourceView>, String> {
+    views(&*vault.guard()?, &cloud)
 }
 
 /// Starts signing in to Vallic Cloud: the code to show and the page to type it at.
@@ -183,7 +240,7 @@ pub async fn vallic_sign_in_poll(
     source_id: Option<String>,
     vault_id: Option<String>,
 ) -> Result<SignInStatus, String> {
-    let _one = cloud.0.lock().await;
+    let _one = cloud.one.lock().await;
     let v = client(endpoint.as_deref())?;
     let tokens = match v.poll(&device_code).await.map_err(|e| e.to_string())? {
         Poll::Pending => return Ok(SignInStatus::Pending { slower: false }),
@@ -229,7 +286,7 @@ pub async fn vallic_sign_in_poll(
     };
     vault.changed();
     let refresh = refresh_with(&vault, &v, &id, &mut session).await?;
-    let source = views(&*vault.guard()?)?
+    let source = views(&*vault.guard()?, &cloud)?
         .into_iter()
         .find(|s| s.id == id)
         .ok_or("the source went away")?;
@@ -259,8 +316,13 @@ pub struct RefreshResult {
     without_shell: Vec<String>,
     /// Machines without the address the source uses (running ones, or new stopped ones).
     without_address: Vec<String>,
-    /// Regions, projects or subscriptions that couldn't be listed, and why.
+    /// Regions, projects or subscriptions that couldn't be listed, and why; a feed's entries
+    /// left out.
     skipped: Vec<String>,
+    /// A feed's snippets.
+    snippets_added: usize,
+    snippets_updated: usize,
+    snippets_removed: usize,
 }
 
 /// Brings a source's hosts in from the provider: with this device's sign-in (Vallic Cloud), or
@@ -271,33 +333,136 @@ pub async fn cloud_refresh(
     cloud: State<'_, CloudState>,
     source_id: String,
 ) -> Result<RefreshResult, String> {
-    let _one = cloud.0.lock().await;
+    let _one = cloud.one.lock().await;
+    let result = refresh(&vault, &source_id).await;
+    cloud.note(&source_id, &result);
+    result
+}
+
+/// [`cloud_refresh`], with the one cloud operation running here held.
+async fn refresh(vault: &VaultState, source_id: &str) -> Result<RefreshResult, String> {
     let provider = match vault
         .guard()?
-        .item(&source_id)
+        .item(source_id)
         .map_err(|e| e.to_string())?
         .data
     {
         ItemData::CloudSource(c) => c.provider,
         _ => return Err("not a cloud source".into()),
     };
-    if provider != "vallic" {
-        return refresh_cli(&vault, &source_id).await;
+    match provider.as_str() {
+        "vallic" => {}
+        "feed" => return refresh_feed(vault, source_id).await,
+        _ => return refresh_cli(vault, source_id).await,
     }
     let (endpoint, refresh) = {
         let v = vault.guard()?;
-        let ItemData::CloudSource(c) = v.item(&source_id).map_err(|e| e.to_string())?.data else {
+        let ItemData::CloudSource(c) = v.item(source_id).map_err(|e| e.to_string())?.data else {
             return Err("not a cloud source".into());
         };
         let refresh = v
-            .local_secret(&secret_name(&source_id))
+            .local_secret(&secret_name(source_id))
             .map_err(|e| e.to_string())?
             .ok_or("this device isn't signed in to it: sign in first")?;
         (c.endpoint, refresh.to_string())
     };
     let v = client(endpoint.as_deref())?;
     let mut session = Session::new(refresh);
-    refresh_with(&vault, &v, &source_id, &mut session).await
+    refresh_with(vault, &v, source_id, &mut session).await
+}
+
+/// A feed: read from its URL with the source's token; its hosts and snippets into the vault.
+async fn refresh_feed(vault: &VaultState, source_id: &str) -> Result<RefreshResult, String> {
+    let c = match vault
+        .guard()?
+        .item(source_id)
+        .map_err(|e| e.to_string())?
+        .data
+    {
+        ItemData::CloudSource(c) => c,
+        _ => return Err("not a cloud source".into()),
+    };
+    let (Some(url), Some(token)) = (&c.url, &c.token) else {
+        return Err(format!("{}: a feed needs its address and token", c.label));
+    };
+    let feed = feed::fetch(&c.label, url, token)
+        .await
+        .map_err(|e| match e {
+            mg_inventory::Error::TokenRefused(name) => {
+                format!("{name} refused the token: change it in the source's settings")
+            }
+            e => e.to_string(),
+        })?;
+    apply_feed(vault, source_id, feed)
+}
+
+/// What a feed listed into the vault of source `source_id`: its hosts, then its snippets.
+fn apply_feed(
+    vault: &VaultState,
+    source_id: &str,
+    feed: feed::Feed,
+) -> Result<RefreshResult, String> {
+    let result = {
+        let mut store = vault.guard()?;
+        let mut result = apply(&mut store, source_id, &feed.hosts)?;
+        let (added, updated, removed) = apply_snippets(&mut store, source_id, &feed.snippets)?;
+        result.snippets_added = added;
+        result.snippets_updated = updated;
+        result.snippets_removed = removed;
+        result.skipped = feed.skipped;
+        result
+    };
+    vault.changed();
+    Ok(result)
+}
+
+/// Refreshes the feeds that are due: on a vault this device can write to, and not refreshed (on
+/// any device) in the last 10 minutes. The app calls it at unlock and every 15 minutes; a failure
+/// shows on the source's card. Returns how many it refreshed.
+#[tauri::command]
+pub async fn cloud_auto_refresh(
+    vault: State<'_, VaultState>,
+    cloud: State<'_, CloudState>,
+) -> Result<usize, String> {
+    if cfg!(mobile) {
+        return Ok(0);
+    }
+    let due = |v: &LocalVault| -> Result<Vec<String>, String> {
+        let writable: HashSet<String> = v
+            .vaults()
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .filter(|x| x.access >= Access::Write)
+            .map(|x| x.id)
+            .collect();
+        Ok(v.items()
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .filter(|i| writable.contains(&i.vault_id))
+            .filter_map(|i| match i.data {
+                ItemData::CloudSource(c)
+                    if c.provider == "feed" && now() - c.refreshed_at >= FEED_FRESH_SECS =>
+                {
+                    Some(i.id)
+                }
+                _ => None,
+            })
+            .collect())
+    };
+    let mut refreshed = 0;
+    let ids = due(&*vault.guard()?)?;
+    for id in ids {
+        let _one = cloud.one.lock().await;
+        // Refreshed meanwhile (by hand, or a sync brought another device's refresh).
+        let still = due(&*vault.guard()?)?.contains(&id);
+        if !still {
+            continue;
+        }
+        let result = refresh_feed(&vault, &id).await;
+        cloud.note(&id, &result);
+        refreshed += usize::from(result.is_ok());
+    }
+    Ok(refreshed)
 }
 
 async fn refresh_with(
@@ -410,6 +575,43 @@ async fn refresh_cli(vault: &VaultState, source_id: &str) -> Result<RefreshResul
     Ok(result)
 }
 
+/// Makes item `data` of `source_id` in `vault_id` under the id worked out from what it is
+/// (`kind`, `key`): two devices refreshing at once write the same item, and the second gets a
+/// conflict rather than a duplicate. A live item already holding that id (one that lost its
+/// source, say) leaves this one a new id of its own.
+fn create(
+    v: &mut LocalVault,
+    vault_id: &str,
+    source_id: &str,
+    kind: &str,
+    key: &str,
+    data: ItemData,
+) -> mg_store::Result<Item> {
+    let id = mg_store::derived_id(&[vault_id, source_id, kind, key]);
+    match v.item(&id) {
+        Ok(_) => save(v, None, Some(vault_id), data),
+        Err(mg_store::Error::NotFound(_)) => v.insert_in(vault_id, &id, data),
+        Err(e) => Err(e),
+    }
+}
+
+/// The host's tags: the person's (what the source didn't give it), then what the source gives
+/// it now.
+fn merged_tags(h: &Host, before: &[String], now: &[String]) -> Vec<String> {
+    let mut tags: Vec<String> = h
+        .tags
+        .iter()
+        .filter(|t| !before.contains(t))
+        .cloned()
+        .collect();
+    for t in now {
+        if !tags.contains(t) {
+            tags.push(t.clone());
+        }
+    }
+    tags
+}
+
 /// The platform's hosts into the vault of source `source_id`.
 fn apply(
     v: &mut LocalVault,
@@ -477,6 +679,8 @@ fn apply(
                 place: via.place.clone(),
                 project: via.project.clone(),
             }),
+            host_keys: ih.host_keys.clone(),
+            tags: ih.tags.clone(),
         };
         match kept.remove(&ih.external_id) {
             Some((id, mut h)) => {
@@ -496,6 +700,12 @@ fn apply(
                 if ih.jump.is_none() {
                     h.jump_ref = source_jump.clone().filter(|_| ih.via.is_none());
                 }
+                let before = h
+                    .source
+                    .as_ref()
+                    .map(|s| s.tags.clone())
+                    .unwrap_or_default();
+                h.tags = merged_tags(&h, &before, &ih.tags);
                 h.source = Some(Box::new(mark(&ih.label)));
                 if h != was {
                     save(v, Some(&id), None, ItemData::Host(h)).map_err(e)?;
@@ -506,18 +716,28 @@ fn apply(
             // New and without an address (stopped): nothing to connect to yet.
             None if ih.hostname.is_empty() => result.without_address.push(ih.label.clone()),
             None => {
+                // In the group of that name, made when missing; none where the source names none.
                 let group_ref = match groups.get(&ih.group.to_lowercase()) {
-                    Some(g) => g.clone(),
+                    _ if ih.group.trim().is_empty() => None,
+                    Some(g) => Some(g.clone()),
                     None => {
                         let group = HostGroup {
                             name: ih.group.clone(),
                             ..HostGroup::default()
                         };
-                        let id = save(v, None, Some(&vault_id), ItemData::HostGroup(group))
-                            .map_err(e)?
-                            .id;
-                        groups.insert(ih.group.to_lowercase(), id.clone());
-                        id
+                        let key = ih.group.to_lowercase();
+                        let id = create(
+                            v,
+                            &vault_id,
+                            source_id,
+                            "group",
+                            &key,
+                            ItemData::HostGroup(group),
+                        )
+                        .map_err(e)?
+                        .id;
+                        groups.insert(key, id.clone());
+                        Some(id)
                     }
                 };
                 let host = Host {
@@ -535,9 +755,9 @@ fn apply(
                     vpn_ref: None,
                     theme_ref: None,
                     record_sessions: false,
-                    tags: Vec::new(),
+                    tags: ih.tags.clone(),
                     notes: String::new(),
-                    group_ref: Some(group_ref),
+                    group_ref,
                     identity_ref: None,
                     keep_session: false,
                     forward_agent: false,
@@ -546,9 +766,16 @@ fn apply(
                     proxy_command: None,
                     source: Some(Box::new(mark(&ih.label))),
                 };
-                let id = save(v, None, Some(&vault_id), ItemData::Host(host))
-                    .map_err(e)?
-                    .id;
+                let id = create(
+                    v,
+                    &vault_id,
+                    source_id,
+                    "host",
+                    &ih.external_id,
+                    ItemData::Host(host),
+                )
+                .map_err(e)?
+                .id;
                 ids.insert(ih.external_id.clone(), id);
                 result.added += 1;
             }
@@ -583,6 +810,68 @@ fn apply(
     Ok(result)
 }
 
+/// A feed's snippets into its vault: the feed decides them whole (they're read-only in the app),
+/// so one it no longer lists is deleted. Returns (added, updated, removed).
+fn apply_snippets(
+    v: &mut LocalVault,
+    source_id: &str,
+    snippets: &[FeedSnippet],
+) -> Result<(usize, usize, usize), String> {
+    let e = |e: mg_store::Error| e.to_string();
+    let vault_id = v.item(source_id).map_err(e)?.vault_id;
+    let mut kept: HashMap<String, (String, Snippet)> = v
+        .items()
+        .map_err(e)?
+        .into_iter()
+        .filter(|i| i.vault_id == vault_id)
+        .filter_map(|i| match i.data {
+            ItemData::Snippet(s) => match &s.source {
+                Some(src) if src.source_ref == source_id => {
+                    Some((src.external_id.clone(), (i.id, s)))
+                }
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect();
+    let (mut added, mut updated) = (0, 0);
+    for fs in snippets {
+        let snippet = Snippet {
+            name: fs.name.clone(),
+            body: fs.body.clone(),
+            tags: fs.tags.clone(),
+            source: Some(SnippetSource {
+                source_ref: source_id.to_owned(),
+                external_id: fs.external_id.clone(),
+            }),
+        };
+        match kept.remove(&fs.external_id) {
+            Some((_, was)) if was == snippet => {}
+            Some((id, _)) => {
+                save(v, Some(&id), None, ItemData::Snippet(snippet)).map_err(e)?;
+                updated += 1;
+            }
+            None => {
+                create(
+                    v,
+                    &vault_id,
+                    source_id,
+                    "snippet",
+                    &fs.external_id,
+                    ItemData::Snippet(snippet),
+                )
+                .map_err(e)?;
+                added += 1;
+            }
+        }
+    }
+    let removed = kept.len();
+    for (id, _) in kept.into_values() {
+        v.delete(&id).map_err(e)?;
+    }
+    Ok((added, updated, removed))
+}
+
 /// Ends this device's sign-in (on the console too); the source and its hosts stay.
 #[tauri::command]
 pub async fn cloud_sign_out(
@@ -590,7 +879,7 @@ pub async fn cloud_sign_out(
     cloud: State<'_, CloudState>,
     source_id: String,
 ) -> Result<(), String> {
-    let _one = cloud.0.lock().await;
+    let _one = cloud.one.lock().await;
     let (endpoint, refresh) = {
         let v = vault.guard()?;
         let endpoint = match v.item(&source_id).map_err(|e| e.to_string())?.data {
@@ -610,7 +899,8 @@ pub async fn cloud_sign_out(
         .map_err(|e| e.to_string())
 }
 
-/// Removes a source: its hosts too (`delete_hosts`), or they stay as hosts of their own.
+/// Removes a source: its hosts (and a feed's snippets) too (`delete_hosts`), or they stay as
+/// hosts and snippets of their own.
 #[tauri::command]
 pub async fn cloud_source_delete(
     vault: State<'_, VaultState>,
@@ -637,6 +927,19 @@ pub async fn cloud_source_delete(
                 _ => None,
             })
             .collect();
+        let snippets: Vec<(String, Snippet)> = v
+            .items()
+            .map_err(e)?
+            .into_iter()
+            .filter_map(|i| match i.data {
+                ItemData::Snippet(s)
+                    if s.source.as_ref().is_some_and(|s| s.source_ref == source_id) =>
+                {
+                    Some((i.id, s))
+                }
+                _ => None,
+            })
+            .collect();
         if delete_hosts {
             // Hosts that jump through others first, so none is still in use when it goes.
             let (through, rest): (Vec<_>, Vec<_>) =
@@ -644,10 +947,17 @@ pub async fn cloud_source_delete(
             for (id, _) in through.into_iter().chain(rest) {
                 v.delete(&id).map_err(e)?;
             }
+            for (id, _) in snippets {
+                v.delete(&id).map_err(e)?;
+            }
         } else {
             for (id, mut h) in hosts {
                 h.source = None;
                 save(&mut v, Some(&id), None, ItemData::Host(h)).map_err(e)?;
+            }
+            for (id, mut s) in snippets {
+                s.source = None;
+                save(&mut v, Some(&id), None, ItemData::Snippet(s)).map_err(e)?;
             }
         }
         v.delete(&source_id).map_err(e)?;
@@ -888,7 +1198,7 @@ pub async fn cloud_source_add(
     key_id: Option<String>,
     settings: SourceSettings,
 ) -> Result<Added, String> {
-    let _one = cloud.0.lock().await;
+    let _one = cloud.one.lock().await;
     let cli = find_cli(&*vault.guard()?, &provider)?;
     let profile = trimmed(settings.profile.clone());
     let account = whoami(&cli, &provider, profile.as_deref()).await?;
@@ -925,7 +1235,7 @@ pub async fn cloud_source_add(
     };
     vault.changed();
     let refresh = refresh_cli(&vault, &id).await?;
-    let source = views(&*vault.guard()?)?
+    let source = views(&*vault.guard()?, &cloud)?
         .into_iter()
         .find(|s| s.id == id)
         .ok_or("the source went away")?;
@@ -948,10 +1258,124 @@ pub fn cloud_source_settings(
         let ItemData::CloudSource(mut source) = v.item(&source_id).map_err(e)?.data else {
             return Err("not a cloud source".into());
         };
-        if source.provider == "vallic" {
-            return Err("Vallic Cloud lists what your sign-in reaches".into());
+        match source.provider.as_str() {
+            "vallic" => return Err("Vallic Cloud lists what your sign-in reaches".into()),
+            "feed" => return Err("a feed's settings are its address and token".into()),
+            _ => {}
         }
         settings.onto(&mut source);
+        save(
+            &mut v,
+            Some(&source_id),
+            None,
+            ItemData::CloudSource(source),
+        )
+        .map_err(e)?;
+    }
+    vault.changed();
+    Ok(())
+}
+
+/// A feed source's name, address and token (`None` or empty: the token stays as it is).
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FeedInput {
+    #[serde(default)]
+    label: Option<String>,
+    url: String,
+    #[serde(default)]
+    token: Option<String>,
+}
+
+/// A feed's address, checked: `https://`, or `http://` on this computer.
+fn feed_url(url: &str) -> Result<String, String> {
+    feed::check_url(url)
+        .map(|u| u.to_string())
+        .map_err(|e| e.to_string())
+}
+
+/// Adds a feed (in `vault_id`, default the personal vault) once it has been read with the token,
+/// named as given, else as the feed calls itself, else by its host; then brings its hosts and
+/// snippets in.
+#[tauri::command]
+pub async fn cloud_feed_add(
+    vault: State<'_, VaultState>,
+    cloud: State<'_, CloudState>,
+    vault_id: Option<String>,
+    key_id: Option<String>,
+    input: FeedInput,
+) -> Result<Added, String> {
+    let _one = cloud.one.lock().await;
+    let parsed = feed::check_url(&input.url).map_err(|e| e.to_string())?;
+    let url = parsed.to_string();
+    let host = parsed.host_str().unwrap_or("the feed").to_owned();
+    let token = trimmed(input.token).ok_or("a feed needs the token it's read with")?;
+    let label = trimmed(input.label);
+    // Read before it's kept: a wrong address or token is said now, and the feed may name itself.
+    let read = feed::fetch(label.as_deref().unwrap_or(&host), &url, &token)
+        .await
+        .map_err(|e| e.to_string())?;
+    let id = {
+        let mut store = vault.guard()?;
+        let target = match vault_id.filter(|v| !v.is_empty()) {
+            Some(id) => id,
+            None => personal(&store)?,
+        };
+        let source = CloudSource {
+            label: label.or(read.name.clone()).unwrap_or(host),
+            provider: "feed".into(),
+            key_ref: trimmed(key_id),
+            account: String::new(),
+            url: Some(url),
+            token: Some(token),
+            ..CloudSource::default()
+        };
+        save(
+            &mut store,
+            None,
+            Some(&target),
+            ItemData::CloudSource(source),
+        )
+        .map_err(|e| e.to_string())?
+        .id
+    };
+    vault.changed();
+    // What was read, brought in: no second request.
+    let refresh = apply_feed(&vault, &id, read);
+    cloud.note(&id, &refresh);
+    let source = views(&*vault.guard()?, &cloud)?
+        .into_iter()
+        .find(|s| s.id == id)
+        .ok_or("the source went away")?;
+    Ok(Added {
+        source: Box::new(source),
+        refresh: refresh?,
+    })
+}
+
+/// Changes a feed's name, address or token (the next refresh reads it).
+#[tauri::command]
+pub fn cloud_feed_settings(
+    vault: State<'_, VaultState>,
+    source_id: String,
+    input: FeedInput,
+) -> Result<(), String> {
+    {
+        let mut v = vault.guard()?;
+        let e = |e: mg_store::Error| e.to_string();
+        let ItemData::CloudSource(mut source) = v.item(&source_id).map_err(e)?.data else {
+            return Err("not a cloud source".into());
+        };
+        if source.provider != "feed" {
+            return Err("not a feed".into());
+        }
+        if let Some(label) = trimmed(input.label) {
+            source.label = label;
+        }
+        source.url = Some(feed_url(&input.url)?);
+        if let Some(token) = trimmed(input.token) {
+            source.token = Some(token);
+        }
         save(
             &mut v,
             Some(&source_id),
@@ -972,7 +1396,7 @@ pub async fn cloud_add_key(
     source_id: String,
     key_id: String,
 ) -> Result<(), String> {
-    let _one = cloud.0.lock().await;
+    let _one = cloud.one.lock().await;
     let (endpoint, refresh, label, public_key) = {
         let v = vault.guard()?;
         let e = |e: mg_store::Error| e.to_string();
@@ -1037,6 +1461,8 @@ mod tests {
             state: None,
             key_name: None,
             via: None,
+            host_keys: vec![],
+            tags: vec![],
         }
     }
 
@@ -1109,6 +1535,8 @@ mod tests {
             state: state.map(str::to_owned),
             key_name: Some("deploy".into()),
             via: None,
+            host_keys: vec![],
+            tags: vec![],
         };
         let first = apply(
             &mut v,
@@ -1178,6 +1606,8 @@ mod tests {
                 place: "eu-central-1".into(),
                 project: None,
             }),
+            host_keys: vec![],
+            tags: vec![],
         };
         let command = reach_command(&v, &source).unwrap().unwrap();
         assert_eq!(
@@ -1291,5 +1721,116 @@ mod tests {
             unreachable!()
         };
         assert!(gone.source.unwrap().gone);
+    }
+
+    /// A feed: its hosts under ids worked out from what they are (the same on every device),
+    /// its groups, tags (the person's kept) and host keys; its snippets follow it whole.
+    #[test]
+    fn a_feed_keeps_hosts_and_snippets_in_step() {
+        let mut v = vault();
+        let target = personal(&v).unwrap();
+        let sid = save(
+            &mut v,
+            None,
+            Some(&target),
+            ItemData::CloudSource(CloudSource {
+                label: "Ops".into(),
+                provider: "feed".into(),
+                url: Some("https://ops.example/feed".into()),
+                token: Some("T".into()),
+                ..CloudSource::default()
+            }),
+        )
+        .unwrap()
+        .id;
+        let doc = |port: u16, tags: &[&str], snippet_body: Option<&str>| {
+            let mut snippets =
+                vec![serde_json::json!({ "id": "up", "name": "Uptime", "body": "uptime" })];
+            if let Some(body) = snippet_body {
+                snippets.push(serde_json::json!({ "id": "logs", "name": "Logs", "body": body }));
+            }
+            mg_inventory::feed::parse(
+                "Ops",
+                serde_json::json!({
+                    "version": 1,
+                    "hosts": [
+                        { "id": "bastion", "hostname": "bastion.example", "user": "ops", "group": "Bastions",
+                          "host_keys": ["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl"] },
+                        { "id": "web", "hostname": "10.0.0.1", "port": port, "user": "ops", "jump": "bastion",
+                          "tags": tags },
+                        { "id": "loose", "hostname": "loose.example", "user": "ops" }
+                    ],
+                    "snippets": snippets
+                })
+                .to_string()
+                .as_bytes(),
+            )
+            .unwrap()
+        };
+        let first = doc(22, &["prod"], Some("journalctl -n 100"));
+        let r = apply(&mut v, &sid, &first.hosts).unwrap();
+        assert_eq!((r.added, r.updated), (3, 0));
+        assert_eq!(
+            apply_snippets(&mut v, &sid, &first.snippets).unwrap(),
+            (2, 0, 0)
+        );
+        let hosts = hosts_of(&v, &sid);
+        let id_of = |label: &str| {
+            hosts
+                .iter()
+                .find(|(_, h)| h.label == label)
+                .unwrap()
+                .0
+                .clone()
+        };
+        let web = id_of("web");
+        // Every device works out the same id.
+        assert_eq!(
+            web,
+            mg_store::derived_id(&[&target, &sid, "host", "feed:web"])
+        );
+        let ItemData::Host(h) = v.item(&web).unwrap().data else {
+            unreachable!()
+        };
+        assert_eq!(h.jump_ref, Some(id_of("bastion")));
+        assert_eq!(h.tags, ["prod"]);
+        assert_eq!(h.group_ref, None, "no group where the feed names none");
+        let ItemData::Host(b) = v.item(&id_of("bastion")).unwrap().data else {
+            unreachable!()
+        };
+        assert_eq!(b.source.unwrap().host_keys.len(), 1);
+        assert!(b.group_ref.is_some());
+
+        // The person tags it; the feed moves its port and swaps its tag.
+        let ItemData::Host(mut mine) = v.item(&web).unwrap().data else {
+            unreachable!()
+        };
+        mine.tags.push("mine".into());
+        save(&mut v, Some(&web), None, ItemData::Host(mine)).unwrap();
+        let second = doc(2222, &["fsn1"], None);
+        let r = apply(&mut v, &sid, &second.hosts).unwrap();
+        assert_eq!((r.added, r.updated, r.gone), (0, 1, 0));
+        let ItemData::Host(h) = v.item(&web).unwrap().data else {
+            unreachable!()
+        };
+        assert_eq!(
+            (h.port, h.tags.as_slice()),
+            (2222, &["mine".to_owned(), "fsn1".to_owned()][..])
+        );
+        // The snippet the feed dropped goes; nobody's edits are lost, it couldn't be edited.
+        assert_eq!(
+            apply_snippets(&mut v, &sid, &second.snippets).unwrap(),
+            (0, 0, 1)
+        );
+        let names: Vec<String> = v
+            .items()
+            .unwrap()
+            .into_iter()
+            .filter_map(|i| match i.data {
+                ItemData::Snippet(s) => Some(s.name),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(names, ["Uptime"]);
     }
 }

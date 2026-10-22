@@ -40,6 +40,9 @@ xterm.js in the webview avoids writing a terminal renderer.
 - [x] Terminal appearance: built-in themes plus themes imported from Ghostty, Alacritty, iTerm2 and Windows
       Terminal files (vault items, synced), a theme per host, and this device's font, size and cursor
 - [x] Jump hosts (ProxyJump chains via direct-tcpip, per-hop host-key pinning)
+- [x] Cloud sources: hosts kept in step with Vallic Cloud (its API), AWS, Google Cloud, Azure, Hetzner Cloud and
+      DigitalOcean (their CLIs), and feeds: hosts and snippets from a JSON document a team publishes at a URL,
+      read with a token, refreshed every 15 minutes, with the host keys it lists trusted for its hosts
 - [x] Port forwarding: local / remote / dynamic SOCKS5 tunnels saved in the vault, start/stop from the sidebar
 - [x] SFTP tabs (`russh-sftp`): local + remote panes, drag and drop (also from the OS), recursive upload/download
       with progress, cancel and replace, mkdir/rename/chmod/delete
