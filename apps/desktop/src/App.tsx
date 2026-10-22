@@ -480,8 +480,9 @@ function Workspace({ onLock, termSettings, onSettingsChanged: loadTermSettings, 
     void refresh().then(() => setLoaded(true));
   }, [refresh]);
   // Opened (unlocked) with hosts: home is the hosts, unless a link filled in quick connect meanwhile.
+  // The view as it is now: a page opened in the moment before this runs stays open.
   useEffect(() => {
-    if (loaded && view.kind === "quick" && !linked?.connect) setView(home());
+    if (loaded && !linked?.connect) setView((v) => (v.kind === "quick" ? home() : v));
   }, [loaded]);
 
   useEffect(() => {

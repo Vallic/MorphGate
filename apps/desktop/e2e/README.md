@@ -24,19 +24,25 @@ Screenshots and logs go to `target/e2e/run-<time>/`.
 
 `android-monkey.mjs` isn't one of `run.sh`'s scenarios: it runs Android's own monkey
 (`adb shell monkey`) on the Android app, on an emulator or a phone adb reaches. CI's "Android
-monkey" job runs it in an API 35 emulator on every pull request; it isn't a required check.
+monkey" job runs a basic one in an API 35 emulator on every pull request (3 rounds of 500 events,
+ANRs noted, a 720 × 1600 screen); it isn't a required check.
 
 It takes a debug build (for the emulator's processor), whose WebView answers DevTools: through it
 the app's first screen creates the vault (then a key, groups, hosts where nothing listens and a
 snippet go in), its unlock screen opens it, and what the page throws is heard (with when: the
 app's start, the setup or the walk). It never reloads the page, which would drop the app's calls
-still under way. Then `MONKEY_ROUNDS` (5) rounds of `MONKEY_EVENTS` (1000) touches, swipes,
-screen turns and navigation keys, each round from a fresh start with the app's task pinned (so Back
-and swipes stay in it; starts of other apps are refused). It fails on a crash or an ANR, a Rust
-panic or a Java exception in the log, an error the page throws, the process ending or the page
-going blank, writing `failure.txt` with the seed; `MONKEY_SEED` repeats the events (not always what
-they hit: timing differs). It starts by clearing the app's data, so don't point it at a phone
-whose MorphGate you use.
+still under way. It waits for the device to finish what it does after booting (up to 5 minutes;
+a fresh emulator compiles apps for a while). Then `MONKEY_ROUNDS` (5) rounds of `MONKEY_EVENTS`
+(1000) touches, swipes, screen turns and navigation keys, each round from a fresh start with the
+app's task pinned (so Back and swipes stay in it; starts of other apps are refused). It fails on a
+crash or an ANR, a Rust panic or a Java exception in the log, an error the page throws, the process
+ending, the page going blank or the app no longer drawing a frame at the end of a round, writing
+`failure.txt` with the seed; `MONKEY_SEED` repeats the events (not always what they hit: timing
+differs). On an emulator, where the ANR reports can be read (through `su`), the main thread's stack
+goes to the round's `anr.txt`. `MONKEY_ANR=note` notes ANRs instead of failing on them, for an
+emulator drawing in software, whose frames can take longer than the 5 seconds Android gives a
+touch; the app still has to draw again by the end of the round. It starts by clearing the app's
+data, so don't point it at a phone whose MorphGate you use.
 
 ```sh
 cd apps/desktop && npx tauri android build --debug --apk --target x86_64 && cd ../..

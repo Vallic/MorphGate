@@ -309,10 +309,13 @@ jobs:
           version=$(sed -n 's/^version = "\(.*\)"/\1/p' ../../Cargo.toml | head -1)
           npx tauri android build --apk --target aarch64 --config "{\"version\":\"$version\"}"
 
-  # Android's monkey on the app in an emulator: rounds of random touches, swipes, turns and keys,
-  # each from a fresh start, over a vault with hosts, keys and a snippet. A crash, a hang (ANR), a
-  # Rust panic or an error the page throws fails it; the seed is in the log (Run workflow takes
-  # one to repeat). A debug build, whose WebView can be driven: apps/desktop/e2e/README.md.
+  # Android's monkey on the app in an emulator, kept basic: 3 rounds of 500 random touches,
+  # swipes, turns and keys, each from a fresh start, over a vault with hosts, keys and a snippet. A
+  # crash, a Rust panic, an error the page throws or an app that stops drawing fails it. The
+  # emulator draws in software, a frame taking seconds, so ANRs are noted rather than failing it,
+  # and the screen is smaller (720 × 1600, as wide in dp as a Pixel 6). The seed is in the log (Run
+  # workflow takes one to repeat). A debug build, whose WebView can be driven:
+  # apps/desktop/e2e/README.md.
   android-monkey:
     name: Android monkey
     runs-on: ubuntu-24.04
@@ -363,6 +366,9 @@ jobs:
         uses: reactivecircus/android-emulator-runner@v2
         env:
           MONKEY_SEED: ${{ inputs.monkey_seed }}
+          MONKEY_ROUNDS: 3
+          MONKEY_EVENTS: 500
+          MONKEY_ANR: note
         with:
           api-level: 35
           target: google_apis
@@ -373,7 +379,10 @@ jobs:
           disk-size: 6000M
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
-          script: ADB="$ANDROID_HOME/platform-tools/adb" node apps/desktop/e2e/android-monkey.mjs apps/desktop/src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk target/e2e/android-monkey
+          script: |
+            "$ANDROID_HOME/platform-tools/adb" shell wm size 720x1600
+            "$ANDROID_HOME/platform-tools/adb" shell wm density 280
+            ADB="$ANDROID_HOME/platform-tools/adb" node apps/desktop/e2e/android-monkey.mjs apps/desktop/src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk target/e2e/android-monkey
 
       - name: Screenshots and logs
         if: always()

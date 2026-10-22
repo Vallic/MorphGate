@@ -20,8 +20,10 @@ for spec in "$@"; do
   installed "$spec" || missing+=("$spec")
 done
 [ ${#missing[@]} -eq 0 ] && exit 0
-apt="sudo apt-get -o DPkg::Lock::Timeout=600"
-$apt update -q
+apt="sudo apt-get -o DPkg::Lock::Timeout=600 -o Acquire::Retries=3"
+# A mirror that stalls mid-download never times out by itself (it held a job for an hour once):
+# an update gets 10 minutes, and a second try.
+timeout 600 $apt update -q || timeout 600 $apt update -q
 install=()
 for spec in "${missing[@]}"; do
   IFS='|' read -ra names <<<"$spec"
@@ -35,4 +37,4 @@ for spec in "${missing[@]}"; do
   install+=("$pick")
 done
 echo "Installing: ${install[*]}"
-$apt install -yq --no-install-recommends "${install[@]}"
+timeout 1200 $apt install -yq --no-install-recommends "${install[@]}"
