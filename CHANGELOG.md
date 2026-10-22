@@ -36,6 +36,10 @@ prompt. Write them for users.
   read-only, and when the feed changes one, Run and Paste show you the new commands first.
 - Two devices refreshing the same cloud source at once no longer make duplicate hosts or
   "(conflict)" copies.
+- About links to the documentation (morphgate.com/docs) and the source code on GitHub.
+- Copy buttons (a public key, the recovery key, an invite code, host key details) fall back to
+  another way of copying when the system refuses the first, and say "Couldn't copy" instead of
+  doing nothing when neither works.
 
 ## 0.2.0
 

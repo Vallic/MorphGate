@@ -21,6 +21,7 @@ import { isTotpCode, TotpCode } from "./TotpCode";
 import appIcon from "./assets/brand/app-icon.svg";
 import { MobileUnlock } from "./mobile/MobileUnlock";
 import { onPhone, useMobile } from "./mobile/useMobile";
+import { copyText } from "./clipboard";
 
 const MIN_CHARS = 10;
 
@@ -292,6 +293,7 @@ const CLIPBOARD_SECONDS = 60;
 export function RecoveryCode({ code, action, onDone }: { code: string; action: string; onDone: () => void }) {
   const [saved, setSaved] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [copyFailed, setCopyFailed] = useState(false);
   // Copied: cleared on leaving this screen (a click, so it works everywhere), or after a minute.
   const clear = () => {
     if (copied) void navigator.clipboard?.writeText("").catch(() => {});
@@ -308,8 +310,8 @@ export function RecoveryCode({ code, action, onDone }: { code: string; action: s
           <span key={i}>{group}</span>
         ))}
       </div>
-      <button type="button" className="secondary" onClick={() => void navigator.clipboard?.writeText(code).then(() => setCopied(true))}>
-        {copied ? "Copied" : "Copy to clipboard"}
+      <button type="button" className="secondary" onClick={() => void copyText(code).then((ok) => (ok ? setCopied(true) : setCopyFailed(true)))}>
+        {copied ? "Copied" : copyFailed ? "Couldn't copy: write it down" : "Copy to clipboard"}
       </button>
       {copied && <p className="hint">MorphGate clears the clipboard when you continue, so the key doesn't stay there.</p>}
       <label className="check">

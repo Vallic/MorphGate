@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { dateText, device, errorText, updates, type About, type UpdateInfo, type UpdateProgress } from "./api";
+import { dateText, device, errorText, openLink, updates, type About, type UpdateInfo, type UpdateProgress } from "./api";
 import { Licenses } from "./Licenses";
 import { Logo } from "./Logo";
 import { mobileOs, onIos } from "./mobile/useMobile";
@@ -24,6 +24,10 @@ const PACKAGE_NAMES: Record<NonNullable<About["package"]>, string> = {
 };
 
 const mib = (n: number) => `${(n / 1048576).toFixed(1)} MiB`;
+
+/** Where people read about MorphGate, and where its code is. */
+const DOCS = "https://morphgate.com/docs";
+const SOURCE = "https://github.com/Vallic/MorphGate";
 
 /** Version, and updates from MorphGate's releases. */
 export function AboutPanel({ update, onUpdate, onAutoCheckChanged, onClose }: Props) {
@@ -92,9 +96,17 @@ export function AboutPanel({ update, onUpdate, onAutoCheckChanged, onClose }: Pr
           </div>
         </div>
         <p className="hint">SSH client with an end-to-end encrypted vault. Free software under the Mozilla Public License 2.0 · morphgate.com</p>
-        <button type="button" className="link align-start" onClick={() => setLicenses(true)}>
-          Open-source licenses
-        </button>
+        <div className="row wrap about-links">
+          <button type="button" className="link" onClick={() => void openLink(DOCS).catch((e) => setError(errorText(e)))}>
+            Documentation ↗
+          </button>
+          <button type="button" className="link" onClick={() => void openLink(SOURCE).catch((e) => setError(errorText(e)))}>
+            Source code on GitHub ↗
+          </button>
+          <button type="button" className="link" onClick={() => setLicenses(true)}>
+            Open-source licenses
+          </button>
+        </div>
         <hr className="divider" />
         <h2 className="section-title">Updates</h2>
         {mobileOs ? (
