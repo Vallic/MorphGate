@@ -30,6 +30,11 @@ pub enum Error {
     Untrusted(String),
     #[error("vault data is corrupt: {0}")]
     Corrupt(String),
+    /// The vault file has a schema this app doesn't know: a newer MorphGate wrote it.
+    #[error(
+        "this vault was saved by a newer version of MorphGate (vault format {found}; this version reads up to {known}). Install the latest version from morphgate.com/download to open it; the vault is unchanged."
+    )]
+    NewerVault { found: usize, known: usize },
     /// A signed copy of an item older than one this device has seen: a server serving an old
     /// envelope again.
     #[error(

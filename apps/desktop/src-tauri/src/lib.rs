@@ -99,10 +99,20 @@ pub fn run() {
             }
             let data_dir = app.path().app_data_dir()?;
             let changed = std::sync::Arc::new(tokio::sync::Notify::new());
-            app.manage(vault::VaultState::open(
-                &data_dir.join("vault.sqlite3"),
-                changed.clone(),
-            )?);
+            // A vault that won't open (one a newer MorphGate wrote, say) leaves the app running
+            // to say why: the window shows what vault_status returns. Nothing else starts.
+            let opened =
+                match vault::VaultState::open(&data_dir.join("vault.sqlite3"), changed.clone()) {
+                    Ok(v) => {
+                        app.manage(v);
+                        true
+                    }
+                    Err(e) => {
+                        tracing::error!("opening the vault: {e}");
+                        app.manage(vault::Unopened(e.to_string()));
+                        false
+                    }
+                };
             app.manage(ssh::SshState::new(data_dir));
             app.manage(sync::SyncState::new(changed));
             app.manage(vpn::VpnManager::default());
@@ -128,7 +138,9 @@ pub fn run() {
                     links::received(app.handle(), urls);
                 }
             }
-            sync::spawn_loop(app.handle().clone());
+            if opened {
+                sync::spawn_loop(app.handle().clone());
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

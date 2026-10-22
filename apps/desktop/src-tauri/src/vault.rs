@@ -14,6 +14,9 @@ use crate::util::expand_home;
 
 pub struct VaultState(pub(crate) Arc<Mutex<LocalVault>>, Arc<Notify>);
 
+/// Why the vault file didn't open (then there's no [`VaultState`]): the window says so.
+pub struct Unopened(pub String);
+
 impl VaultState {
     /// `changed` is notified after every local edit (and unlock) so sync can run soon.
     pub fn open(path: &Path, changed: Arc<Notify>) -> mg_store::Result<Self> {
@@ -67,8 +70,14 @@ pub(crate) fn save(
 // ---------------------------------------------------------------- lock / unlock
 
 #[tauri::command]
-pub fn vault_status(vault: State<'_, VaultState>) -> Result<Status, String> {
-    vault.guard()?.status().map_err(err)
+pub fn vault_status(app: tauri::AppHandle) -> Result<Status, String> {
+    use tauri::Manager;
+    match app.try_state::<VaultState>() {
+        Some(vault) => vault.guard()?.status().map_err(err),
+        None => Err(app
+            .try_state::<Unopened>()
+            .map_or_else(|| "the vault didn't open".to_owned(), |u| u.0.clone())),
+    }
 }
 
 /// Returns the recovery code; the UI shows it once and never stores it.

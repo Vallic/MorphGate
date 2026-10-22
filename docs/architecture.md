@@ -43,7 +43,7 @@ How the MorphGate app is put together: the webview, the Tauri commands behind it
 | Reference server | `server/` (`vault-sync-server`) | A self-hostable `vault-sync/v1` server. See [Reference server](features/reference-server.md) |
 | Conformance suite | `tools/vault-conform` | Checks any `vault-sync/v1` server against the protocol, endpoint by endpoint. See [Development](development.md#conformance-suite) |
 
-The whole repository is one Cargo workspace (`Cargo.toml`, edition 2024, Rust 1.91 or newer, one version for every crate: 0.2.0). Argon2 and BLAKE2 are compiled optimized even in debug builds, because unoptimized Argon2 makes tests unusable.
+The whole repository is one Cargo workspace (`Cargo.toml`, edition 2024, Rust 1.91 or newer, one version for every crate: 0.2.1). Argon2 and BLAKE2 are compiled optimized even in debug builds, because unoptimized Argon2 makes tests unusable.
 
 ## The webview and the shell
 
@@ -91,7 +91,7 @@ Everything lives in the app's data folder (Tauri's `app_data_dir` for the identi
 
 ### The SQLite schema
 
-`crates/mg-store/src/schema.rs` migrates by `PRAGMA user_version` (7 migrations). A vault written by a newer app is refused ("please update the app") instead of being misread.
+`crates/mg-store/src/schema.rs` migrates by `PRAGMA user_version` (8 migrations). A vault written by a newer app is refused instead of being misread, and the window says to install the latest version.
 
 | Table | Holds |
 | --- | --- |
