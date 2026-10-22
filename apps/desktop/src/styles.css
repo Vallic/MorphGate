@@ -406,6 +406,18 @@ p.muted {
   text-align: center;
 }
 
+/* Why the vault didn't open (a newer MorphGate's, say), in place of the app. Errors start in
+ * lower case: this one is a sentence on its own. */
+.gate-error {
+  max-width: 440px;
+  text-align: center;
+  text-wrap: balance;
+}
+
+.gate-error::first-letter {
+  text-transform: uppercase;
+}
+
 /* "or with the master password", between two rules. */
 .divider-text {
   display: flex;

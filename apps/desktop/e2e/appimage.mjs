@@ -1090,7 +1090,9 @@ try {
 }
 
 // A vault a newer MorphGate wrote (a schema this version doesn't know): the window says to
-// install the latest version instead of the app quitting, and the vault stays as it was.
+// install the latest version instead of the app quitting, and the vault stays as it was. The
+// last session's app outlives it: stop it, or the launch hands over to it.
+for (const pid of appImagePids()) process.kill(pid, "SIGTERM");
 for (let i = 0; i < 50 && appImagePids().length > 0; i++) await new Promise((r) => setTimeout(r, 200));
 {
   const file = `${process.env.XDG_DATA_HOME}/com.morphgate.desktop/vault.sqlite3`;
