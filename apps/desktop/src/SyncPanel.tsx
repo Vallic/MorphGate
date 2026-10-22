@@ -80,8 +80,42 @@ export function SyncPanel({ status, orgs, onChanged, onClose, onOpenTeams, start
   );
 }
 
-/** First run: the same setup, offered once in a dialog right after the vault is created. `later`
- * says where Sync is found afterwards. */
+// A vault created without sync gets the offer once, a week on (the first screen had New account
+// and Sign in already): when, on this device.
+const OFFER_AT = "morphgate.sync-offer-at";
+const WEEK = 7 * 24 * 60 * 60 * 1000;
+
+/** When `SyncOffer` shows: a week after a vault was created without sync, then never again. */
+export const syncOfferTime = {
+  /** A vault without sync, created just now. */
+  schedule() {
+    try {
+      localStorage.setItem(OFFER_AT, String(Date.now() + WEEK));
+    } catch {
+      // No offer, then: Sync stays in the sidebar.
+    }
+  },
+  /** Whether its week is up. */
+  due() {
+    try {
+      const at = Number(localStorage.getItem(OFFER_AT));
+      return at > 0 && at <= Date.now();
+    } catch {
+      return false;
+    }
+  },
+  /** Answered, or not wanted any more (sync is on, or the device started with an account). */
+  forget() {
+    try {
+      localStorage.removeItem(OFFER_AT);
+    } catch {
+      // Nothing to forget.
+    }
+  },
+};
+
+/** The same setup in a dialog, offered once a week after a vault was created without sync
+ * (`syncOfferTime`). `later` says where Sync is found afterwards. */
 export function SyncOffer({ later, onDone }: { later: string; onDone: (enabled: boolean) => void }) {
   const ref = useRef<HTMLDialogElement>(null);
   const [joinedAs, setJoinedAs] = useState("");

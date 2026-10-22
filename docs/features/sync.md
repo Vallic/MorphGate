@@ -36,7 +36,7 @@ For morphgate.com the sign-up form runs discovery when it opens, so the terms ch
 
 ## Creating an account
 
-Sync starts from the Sync panel (the sidebar foot reads **Sync off**), or from the **Sync this vault?** dialog offered once right after a vault is created (`SyncOffer`, with **Not now**). Under **New account**, the device makes an account from the vault it already has. The aside lists **What the server stores**: the email and devices, encrypted items it can count but not read, and never the master password.
+Sync starts from the Sync panel (the sidebar foot reads **Sync off**), or from the **Sync this vault?** dialog offered once, a week after a vault was created without sync, the next time the workspace opens (`SyncOffer`, with **Not now**). Under **New account**, the device makes an account from the vault it already has. The aside lists **What the server stores**: the email and devices, encrypted items it can count but not read, and never the master password.
 
 | Control | Notes |
 | --- | --- |

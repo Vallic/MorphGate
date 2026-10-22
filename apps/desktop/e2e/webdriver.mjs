@@ -156,9 +156,9 @@ export async function session(application, base = BASE) {
   return s;
 }
 
-/** First launch: creates a vault with `password` and waits for the workspace. A new vault is
- * offered sync in a dialog: "Not now", unless `keepOffer` (the caller turns sync on in it). */
-export async function createVault(s, password, shots, { keepOffer = false } = {}) {
+/** First launch: creates a vault with `password` and waits for the workspace. Sync isn't offered
+ * then (the first screen had New account and Sign in): see `reload`. */
+export async function createVault(s, password, shots) {
   await s.waitText("Create vault", "body", 60000);
   await s.typeLabelled("Master password", password);
   await s.typeLabelled("Repeat password", password);
@@ -174,11 +174,24 @@ export async function createVault(s, password, shots, { keepOffer = false } = {}
   await s.exec(`[...document.querySelectorAll("button.primary")].find((b) => !b.disabled).click(); return true`);
   // The desktop layout, or the phone one.
   await s.wait(() => s.exec(`return document.querySelector("button.brand, .m-home") ? true : null`), "the workspace", 30000);
-  await s.wait(() => s.exec(`return document.querySelector("dialog.sync-offer[open]") ? true : null`), "the offer to turn sync on");
-  if (shots) await s.screenshot(`${shots}/sync-offer.png`);
-  if (keepOffer) return;
-  await s.exec(`[...document.querySelectorAll("dialog.sync-offer button")].find((b) => b.innerText === "Not now").click(); return true`);
-  await s.wait(() => s.exec(`return document.querySelector("dialog.sync-offer") ? null : true`), "the offer to close");
+}
+
+/** The page loaded afresh, as when the app starts with the vault unlocked; with `weekLater`, as a
+ * week after a vault was created without sync (whose offer then opens). */
+export async function reload(s, { weekLater = false } = {}) {
+  await s.exec(
+    `const at = "morphgate.sync-offer-at";
+     if (arguments[0] && localStorage.getItem(at)) localStorage.setItem(at, String(Date.now() - 1));
+     window.__before = true;
+     setTimeout(() => location.reload(), 0);
+     return true`,
+    weekLater,
+  );
+  await s.wait(
+    () => s.exec(`return !window.__before && document.querySelector("button.brand, .m-home") ? true : null`),
+    "the workspace, loaded again",
+    30000,
+  );
 }
 
 /** Opens About and returns the "Version …" line. */

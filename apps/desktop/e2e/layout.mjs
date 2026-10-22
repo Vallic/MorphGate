@@ -1,12 +1,13 @@
 // The pages at several window widths: screenshots, and a check that nothing on them overlaps or
-// runs out of its box. Sync is turned on from the offer a new vault gets; then a key, hosts in a
-// group, a snippet, a tunnel and a team with a vault and an open invite fill the pages.
+// runs out of its box. Sync is turned on from the offer a vault without it gets a week on; then a
+// key, hosts in a group, a snippet, a tunnel and a team with a vault and an open invite fill the
+// pages.
 //
 //   session.sh <dir> node layout.mjs <app> <screenshots> <sync server URL>
 
 import assert from "node:assert/strict";
 import { mkdirSync } from "node:fs";
-import { createVault, session } from "./webdriver.mjs";
+import { createVault, reload, session } from "./webdriver.mjs";
 
 const [app, shots, server] = process.argv.slice(2);
 const PASSWORD = "correct horse battery staple";
@@ -73,7 +74,9 @@ try {
   await s.waitText("Sign in to sync");
   await shoot(s, "first-run-sign-in", ".gate");
   await s.exec(`[...document.querySelectorAll(".gate-choice button")].find((b) => b.innerText === "New vault").click(); return true`);
-  await createVault(s, PASSWORD, shots, { keepOffer: true });
+  await createVault(s, PASSWORD, shots);
+  await reload(s, { weekLater: true });
+  await s.wait(() => s.exec(`return document.querySelector("dialog.sync-offer[open]") ? true : null`), "the offer to turn sync on");
   await shoot(s, "offer", "dialog.sync-offer");
   await s.exec(`[...document.querySelectorAll('dialog.sync-offer .sync-server button[role="radio"]')].find((b) => b.innerText === "Your own server").click(); return true`);
   await s.typeLabelled("Server address", server);
@@ -82,7 +85,7 @@ try {
   await s.clickButton("Enable sync");
   await s.wait(() => s.exec(`return document.querySelector("dialog.sync-offer") ? null : true`), "the offer to close", 60000);
   await s.wait(() => s.exec(`return document.querySelector("button.sidebar-foot.sync")?.innerText.includes("Sync off") ? null : true`), "sync on");
-  ok("turned sync on from the first-run offer");
+  ok("turned sync on from the offer a week after the vault was created");
 
   // The tab bar gives way to a page while no session is open.
   await s.click("button.sidebar-foot.sync");
