@@ -1774,6 +1774,12 @@ dialog.sheet .actions .hint {
   margin: 2px 0 0;
 }
 
+/* Documentation, source code, licenses: the links' text lines up with the text above. */
+.about-links {
+  gap: 2px 14px;
+  margin-left: -4px;
+}
+
 .update-notes {
   max-height: 180px;
   overflow: auto;

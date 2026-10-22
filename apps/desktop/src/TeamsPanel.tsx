@@ -43,6 +43,7 @@ import { Icon } from "./Icon";
 import { Cell, Chip, NameCell, Table, TextAction, TRow } from "./ListParts";
 import { Page } from "./Page";
 import { mobileOs } from "./mobile/useMobile";
+import { copyText } from "./clipboard";
 
 interface Props {
   vaults: VaultEntry[];
@@ -1023,6 +1024,7 @@ function InviteDialog({
   const [grants, setGrants] = useState<Record<string, Access>>({});
   const [sent, setSent] = useState<InviteView[] | null>(null);
   const [copied, setCopied] = useState("");
+  const [copyFailed, setCopyFailed] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -1076,9 +1078,9 @@ function InviteDialog({
                     <button
                       type="button"
                       className="secondary small-button"
-                      onClick={() => void navigator.clipboard?.writeText(i.token ?? "").then(() => setCopied(i.id))}
+                      onClick={() => void copyText(i.token ?? "").then((ok) => (ok ? setCopied(i.id) : setCopyFailed(i.id)))}
                     >
-                      {copied === i.id ? "Copied" : "Copy code"}
+                      {copied === i.id ? "Copied" : copyFailed === i.id ? "Couldn't copy" : "Copy code"}
                     </button>
                   </div>
                 </div>

@@ -200,7 +200,7 @@ if want appimage; then
   # launch (binfmt), the app's own relaunch after an update included. TMPDIR: where an AppImage
   # unpacks to run, in the run's folder rather than /tmp, removed when the run ends.
   mkdir -p "$run/appimage/tmp"
-  APPIMAGE_EXTRACT_AND_RUN=1 APPIMAGELAUNCHER_DISABLE=1 TMPDIR="$run/appimage/tmp" MORPHGATE_BROWSER="$here/browser.sh" \
+  APPIMAGE_EXTRACT_AND_RUN=1 APPIMAGELAUNCHER_DISABLE=1 TMPDIR="$run/appimage/tmp" MORPHGATE_BROWSER="$here/browser.sh" E2E_BROWSER_LOG="$run/appimage/browser.log" \
     dbus-run-session -- "$here/session.sh" "$run/appimage" \
     node "$here/appimage.mjs" "$run/appimage/$appimage" "$run/appimage/shots" "$run/feed" \
     "$run/sshd/client_key" "$ssh_port" "$(id -un)" "$version" "$next" 2>"$run/appimage/stderr.log"
@@ -252,6 +252,25 @@ if want mobile; then
   dbus-run-session -- "$here/session.sh" "$run/mobile" \
     node "$here/mobile.mjs" "$run/mobile/root/usr/bin/morphgate" "$run/mobile/shots" \
     "$run/mobile/key" "$ssh_port" "$(id -un)" 2>"$run/mobile/stderr.log"
+fi
+
+# A monkey test of each package, only when asked for: E2E_ONLY=monkey (MONKEY_STEPS, MONKEY_SEED).
+if [ -n "${E2E_ONLY:-}" ] && want monkey; then
+  for pkg in appimage deb rpm; do
+    echo "e2e: monkey ($pkg)"
+    dir="$run/monkey-$pkg"
+    mkdir -p "$dir/root" "$dir/tmp"
+    case $pkg in
+      appimage) cp "$artifacts/$appimage" "$dir/" && bin="$dir/$appimage" ;;
+      deb) (cd "$dir/root" && ar x "$artifacts/$deb" && tar -xzf data.tar.gz) && bin="$dir/root/usr/bin/morphgate" ;;
+      rpm) (cd "$dir/root" && rpm2cpio "$artifacts/$rpm" | cpio -idm --quiet) && bin="$dir/root/usr/bin/morphgate" ;;
+    esac
+    APPIMAGE_EXTRACT_AND_RUN=1 APPIMAGELAUNCHER_DISABLE=1 TMPDIR="$dir/tmp" MORPHGATE_BROWSER="$here/browser.sh" \
+      dbus-run-session -- "$here/session.sh" "$dir" node "$here/monkey.mjs" "$bin" "$dir" "$pkg" 2>"$dir/stderr.log"
+    # A panic in the app's Rust side counts too.
+    if grep -h "panicked at" "$dir"/*.log; then echo "e2e: monkey ($pkg): the app panicked" >&2; exit 1; fi
+    rm -rf "$dir/tmp"
+  done
 fi
 
 # The README's demo (assets/demo/morphgate.svg), only when asked for: E2E_ONLY=demo.

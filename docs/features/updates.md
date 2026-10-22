@@ -50,6 +50,7 @@ After installing, `app.restart()` quits. On the way out the shell stops tunnels,
 | Control | Does |
 | --- | --- |
 | Version line | "Version 0.2.0 · AppImage" (`PACKAGE_NAMES`: AppImage, Debian package, RPM package, macOS app, Windows installer (MSI), Windows installer), or "· development build". Phones show the version alone |
+| **Documentation ↗**, **Source code on GitHub ↗** | `https://morphgate.com/docs` and `https://github.com/Vallic/MorphGate`, in the browser (`open_link`) |
 | **Open-source licenses** | The third-party notices ([below](#open-source-licenses)) |
 | **Check for updates automatically** | `set_auto_update_check`. Hint: "At launch and twice a day MorphGate asks GitHub for the latest release. Nothing from your vault is sent. Updates are signed, and MorphGate installs only ones signed with its key." |
 | Update notice | "MorphGate X is available", "Released …", and the release notes |

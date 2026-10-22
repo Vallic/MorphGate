@@ -2,6 +2,7 @@ import { useState, type FormEvent } from "react";
 import { errorText, keys as keysApi, type CertInfo, type KeySource, type KeyView, type VaultEntry } from "./api";
 import { FilePick, type PickedFile } from "./FilePick";
 import { isReadOnly, personalVault, VaultField } from "./VaultField";
+import { copyText } from "./clipboard";
 
 /** A certificate's validity now, as a line and a tone. */
 export function certificateValidity(c: CertInfo, now = Date.now() / 1000): { text: string; tone: "ok" | "warn" | "error" } {
@@ -222,6 +223,7 @@ export function KeyDetail({
 }) {
   const readOnly = isReadOnly(vaults, k.vaultId);
   const [copied, setCopied] = useState(false);
+  const [copyFailed, setCopyFailed] = useState(false);
   const [error, setError] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(false);
 
@@ -274,9 +276,9 @@ export function KeyDetail({
           <button
             type="button"
             className="primary"
-            onClick={() => void navigator.clipboard?.writeText(k.publicKey).then(() => setCopied(true))}
+            onClick={() => void copyText(k.publicKey).then((ok) => (ok ? setCopied(true) : setCopyFailed(true)))}
           >
-            {copied ? "Copied" : "Copy public key"}
+            {copied ? "Copied" : copyFailed ? "Couldn't copy" : "Copy public key"}
           </button>
         </div>
       </div>

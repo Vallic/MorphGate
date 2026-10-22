@@ -980,6 +980,13 @@ try {
   assert.match(await openAbout(s), new RegExp(`Version ${version} · AppImage`));
   ok(`About: ${version}, AppImage`);
 
+  // Its documentation and its source code, in the browser (browser.sh notes what it's given).
+  await s.clickButton("Documentation ↗");
+  await s.clickButton("Source code on GitHub ↗");
+  const opened = () => (existsSync(process.env.E2E_BROWSER_LOG) ? readFileSync(process.env.E2E_BROWSER_LOG, "utf8") : "");
+  await s.wait(() => (/^https:\/\/morphgate\.com\/docs$/m.test(opened()) && /^https:\/\/github\.com\/Vallic\/MorphGate$/m.test(opened())) || null, "the documentation and the source code opened");
+  ok("About opens the documentation and the source code");
+
   // The third-party notices that come with the app: a crate's, from the generated list.
   await s.clickButton("Open-source licenses");
   await s.wait(() => s.exec(`return document.querySelector(".licenses-list li") ? true : null`), "the license list");
