@@ -40,11 +40,19 @@ xterm.js in the webview avoids writing a terminal renderer.
 - [x] Terminal appearance: built-in themes plus themes imported from Ghostty, Alacritty, iTerm2 and Windows
       Terminal files (vault items, synced), a theme per host, and this device's font, size and cursor
 - [x] Jump hosts (ProxyJump chains via direct-tcpip, per-hop host-key pinning)
+- [x] Cloud sources: hosts kept in step with Vallic Cloud (its API), AWS, Google Cloud, Azure, Hetzner Cloud and
+      DigitalOcean (their CLIs), and feeds: hosts and snippets from a JSON document a team publishes at a URL,
+      read with a token, refreshed every 15 minutes, with the host keys it lists trusted for its hosts
 - [x] Port forwarding: local / remote / dynamic SOCKS5 tunnels saved in the vault, start/stop from the sidebar
 - [x] SFTP tabs (`russh-sftp`): local + remote panes, drag and drop (also from the OS), recursive upload/download
       with progress, cancel and replace, mkdir/rename/chmod/delete
 - [x] `mg-sync`: vault-sync/v1 client (prelogin/register/login, token rotation, pull/push)
 - [x] Sync engine in `mg-store`: paginated pull, rollback guard, conflict copies, sealed refresh token
+- [x] Item history: every write carries a version inside its signed envelope, deletions are signed, and
+      a device refuses a copy of an item older than one it has seen (servers keep the signed deletion:
+      `signed_tombstones`)
+- [ ] Strict item history on by default (refusing unversioned changes, which only apps before item history
+      send), and signed vault checkpoints for devices with no copy to compare
 - [x] Reference sync server (`server/`, axum + SQLite) with protocol + two-device e2e tests
 - [x] Desktop sync: enable from an existing vault, sign in on a fresh device, background sync, disconnect
 - [x] Password change / recovery / new recovery key while synced (server first, other devices sign in again

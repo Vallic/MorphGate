@@ -330,6 +330,8 @@ pub struct HostSourceView {
     state: Option<String>,
     /// Reached through its cloud: `aws-ssm`, `aws-eice` or `gcp-iap`.
     via: Option<String>,
+    /// The feed that lists its host keys (which decide instead of a pinned key), if one does.
+    listed_by: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -373,6 +375,7 @@ impl HostView {
                 no_forwarding: s.no_forwarding,
                 state: s.state,
                 via: s.reach.map(|r| r.kind),
+                listed_by: (!s.host_keys.is_empty()).then(String::new),
             }),
             group_id: h.group_ref,
             identity_id: h.identity_ref,
@@ -409,6 +412,9 @@ impl HostView {
             }) = v.item(&s.source_id)
         {
             s.provider = c.provider;
+            if let Some(by) = s.listed_by.as_mut() {
+                *by = c.label;
+            }
         }
         Some(view)
     }
@@ -1027,6 +1033,18 @@ pub struct SnippetView {
     body: String,
     tags: Vec<String>,
     updated_at: i64,
+    /// The feed that keeps it (it's read-only here), if one does.
+    source: Option<SnippetSourceView>,
+    /// Its feed changed the body since this device last pasted or ran it: ask first.
+    changed: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SnippetSourceView {
+    source_id: String,
+    /// The feed's name.
+    label: String,
 }
 
 #[derive(Deserialize)]
@@ -1041,22 +1059,79 @@ pub struct SnippetInput {
     tags: Vec<String>,
 }
 
+/// Where this device keeps the hash of the body it last sent of a feed's snippet (not synced).
+fn sent_setting(id: &str) -> String {
+    format!("snippet-sent:{id}")
+}
+
+fn body_hash(body: &str) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(body.as_bytes())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+fn snippet_view(
+    v: &LocalVault,
+    id: String,
+    vault_id: String,
+    updated_at: i64,
+    s: Snippet,
+) -> SnippetView {
+    let source = s.source.as_ref().map(|src| SnippetSourceView {
+        source_id: src.source_ref.clone(),
+        label: match v.item(&src.source_ref).map(|i| i.data) {
+            Ok(ItemData::CloudSource(c)) => c.label,
+            _ => "its feed".into(),
+        },
+    });
+    let changed = source.is_some()
+        && v.setting(&sent_setting(&id))
+            .ok()
+            .flatten()
+            .is_some_and(|sent| sent != body_hash(&s.body));
+    SnippetView {
+        id,
+        vault_id,
+        name: s.name,
+        body: s.body,
+        tags: s.tags,
+        updated_at,
+        source,
+        changed,
+    }
+}
+
+/// A feed's snippet can't be changed here: "make a copy" instead.
+fn from_feed(v: &LocalVault, id: &str) -> Result<(), String> {
+    match v.item(id).map(|i| i.data) {
+        Ok(ItemData::Snippet(Snippet {
+            source: Some(src),
+            name,
+            ..
+        })) => {
+            let feed = match v.item(&src.source_ref).map(|i| i.data) {
+                Ok(ItemData::CloudSource(c)) => c.label,
+                _ => "its feed".into(),
+            };
+            Err(format!(
+                "\"{name}\" comes from {feed}: it changes there, or make a copy to change it here"
+            ))
+        }
+        _ => Ok(()),
+    }
+}
+
 #[tauri::command]
 pub fn snippets_list(vault: State<'_, VaultState>) -> Result<Vec<SnippetView>, String> {
-    let mut snippets: Vec<SnippetView> = vault
-        .guard()?
+    let v = vault.guard()?;
+    let mut snippets: Vec<SnippetView> = v
         .items()
         .map_err(err)?
         .into_iter()
         .filter_map(|i| match i.data {
-            ItemData::Snippet(s) => Some(SnippetView {
-                id: i.id,
-                vault_id: i.vault_id,
-                name: s.name,
-                body: s.body,
-                tags: s.tags,
-                updated_at: i.updated_at,
-            }),
+            ItemData::Snippet(s) => Some(snippet_view(&v, i.id, i.vault_id, i.updated_at, s)),
             _ => None,
         })
         .collect();
@@ -1078,37 +1153,56 @@ pub fn snippet_save(
             .map(|t| t.trim().to_owned())
             .filter(|t| !t.is_empty())
             .collect(),
+        source: None,
     };
+    let mut v = vault.guard()?;
+    if let Some(id) = &input.id {
+        from_feed(&v, id)?;
+    }
     let Item {
         id,
         vault_id,
         updated_at,
         data,
     } = save(
-        &mut *vault.guard()?,
+        &mut v,
         input.id.as_deref(),
         input.vault_id.as_deref(),
         ItemData::Snippet(snippet),
     )
     .map_err(err)?;
-    vault.changed();
-    match data {
-        ItemData::Snippet(s) => Ok(SnippetView {
-            id,
-            vault_id,
-            name: s.name,
-            body: s.body,
-            tags: s.tags,
-            updated_at,
-        }),
+    let view = match data {
+        ItemData::Snippet(s) => snippet_view(&v, id, vault_id, updated_at, s),
         _ => unreachable!("upsert returns the data it was given"),
-    }
+    };
+    drop(v);
+    vault.changed();
+    Ok(view)
 }
 
 #[tauri::command]
 pub fn snippet_delete(vault: State<'_, VaultState>, id: String) -> Result<(), String> {
-    vault.guard()?.delete(&id).map_err(err)?;
+    {
+        let mut v = vault.guard()?;
+        from_feed(&v, &id)?;
+        v.delete(&id).map_err(err)?;
+    }
     vault.changed();
+    Ok(())
+}
+
+/// This device pasted or ran a feed's snippet: what it sent is what it'll compare the next
+/// change with.
+#[tauri::command]
+pub fn snippet_sent(vault: State<'_, VaultState>, id: String) -> Result<(), String> {
+    let v = vault.guard()?;
+    let ItemData::Snippet(s) = v.item(&id).map_err(err)?.data else {
+        return Err("not a snippet".into());
+    };
+    if s.source.is_some() {
+        v.set_setting(&sent_setting(&id), Some(&body_hash(&s.body)))
+            .map_err(err)?;
+    }
     Ok(())
 }
 

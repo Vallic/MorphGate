@@ -36,7 +36,7 @@ For morphgate.com the sign-up form runs discovery when it opens, so the terms ch
 
 ## Creating an account
 
-Sync starts from the Sync panel (the sidebar foot reads **Sync off**), or from the **Sync this vault?** dialog offered once right after a vault is created (`SyncOffer`, with **Not now**). Under **New account**, the device makes an account from the vault it already has. The aside lists **What the server stores**: the email and devices, encrypted items it can count but not read, and never the master password.
+Sync starts from the Sync panel (the sidebar foot reads **Sync off**), or from the **Sync this vault?** dialog offered once, a week after a vault was created without sync, the next time the workspace opens (`SyncOffer`, with **Not now**). Under **New account**, the device makes an account from the vault it already has. The aside lists **What the server stores**: the email and devices, encrypted items it can count but not read, and never the master password.
 
 | Control | Notes |
 | --- | --- |
@@ -85,7 +85,7 @@ On a server with `email_verification`, the first **Enable sync** sends `POST /v1
 
 | Where | Command | What it does |
 | --- | --- | --- |
-| First screen, **I have an account**, titled **Sign in to sync** | `sync_sign_in` | For a device with no vault ("This device already has a vault." otherwise): takes the account's keys and vault key, unlocks; items arrive with the first round |
+| First screen, **Sign in**, titled **Sign in to sync** | `sync_sign_in` | For a device with no vault ("This device already has a vault." otherwise): takes the account's keys and vault key, unlocks; items arrive with the first round |
 | Sync panel, **I have an account** | `sync_join` | For a device with a vault of its own that never synced: its items, files included, move into the account's vault with the same ids, and it opens with the account's master password and recovery key from then on. Keychain unlock is set up again with the account's keys (Android's fingerprint unlock goes off). Refused with "this device syncs already" or "this device has team vaults: it synced before". A wrong password changes nothing |
 | Sync panel while signed out, **Sign in again** | `sync_sign_in_again` | Same device id; re-wraps this vault's keys under the account's current password (it may have changed on another device) |
 | First screen, **Forgot the master password? Use your recovery key** | `sync_recover_sign_in` | New password with the recovery key, then a sign-in; see [Account and devices](account-and-devices.md#password-changes-and-recovery) |
@@ -171,7 +171,7 @@ The personal vault failing fails the round. A shared vault failing is listed and
 | `rejected`, `stale_key` | The item is re-sealed under the vault's current key and goes in the next batch |
 | `rejected`, any other code | Skipped for the rest of the round, still dirty, tried again next round. Not shown anywhere (`SyncReport.rejected`) |
 
-A deletion goes up as a tombstone (`deleted: true`, no envelope). An item deleted before it ever synced (`rev` 0) is removed locally and never sent. A read-only vault only pulls.
+A deletion goes up as a tombstone (`deleted: true`) with its signed deletion envelope ([Item history](#item-history)); servers with `signed_tombstones` keep it (for items they have), others drop it. An item deleted before it ever synced (`rev` 0) is removed locally and never sent. A read-only vault only pulls.
 
 ## Revisions and anti-rollback
 
@@ -183,7 +183,20 @@ Each vault row keeps `head_rev`, the highest server revision this device has app
 | A shared vault's item may not take the id of a live personal item (lookups go by id) | "item {id} of a shared vault has the id of one in your personal vault" |
 | A page whose `head_rev` is below the local `head_rev` | The vault fails: "the sync server sent older data (revision {remote}) than this device already has ({local}); refusing to roll back" (`SyncError::Rollback`) |
 | A pulled item no newer than the local copy | Ignored |
+| A pulled item or deletion with a version below the last one the server confirmed for it | The vault fails: "the sync server sent an older copy of item {id} (version {remote}) than this device already has (version {seen}); refusing to roll it back" (`Error::OlderItem`). Nothing from the page is applied |
 | `410` on a pull (code `gone` or none; `410 invite_expired` is something else) | The cursor goes back to 0 and the vault is pulled in full; afterwards, clean synced items the server didn't send are deleted here (`drop_unseen`). The `head_rev` check doesn't apply to this full pull; the per-item check does |
+
+## Item history
+
+Every write carries a version inside its signed envelope (`crates/mg-store/src/history.rs`, the spec's [Item history](../sync-crypto-spec.md#sync-protocol)): the time of the write in milliseconds, or one more than the highest version this device knows of the item when that is larger (`LocalVault::next_version`). Edits, conflict copies, re-seals under a rotated key (`reseal`) and deletions (`LocalVault::tombstone`, from `delete` and from moves) all take a new one. Each item row keeps `version`, the one in its envelope, and `seen_version`, the one of the last copy the server confirmed: set by `apply_remote` and by `mark_pushed`.
+
+| Pulled | Effect |
+| --- | --- |
+| A versioned copy at or above `seen_version` | Applied; `seen_version` follows it |
+| A versioned copy below it | Refused (`Error::OlderItem`, above) |
+| A copy without a version, or a deletion without a valid signed envelope (apps before item history, 0.2.0) | Applied; `seen_version` goes to 0, so the next versioned copy is taken whatever its version (its writer may not have seen the earlier ones) |
+| The same, with strict item history on (`LocalVault::set_strict_history`, off for now) | Refused when the item has a version (`Error::UnversionedItem`) |
+| An item whose row is from before item history (`seen_version` NULL) | Compared with the version in its stored envelope |
 
 ## Conflicts
 
@@ -192,6 +205,7 @@ From the code's own statement: the server copy always wins for an item id, and a
 | Local | Server | Result |
 | --- | --- | --- |
 | An edit | An edit with the same content (both re-sealed it, say) | No copy, no conflict |
+| A cloud source's change | The same source's change from another device (both refreshed it) | No copy, no conflict, when the copies differ only in what the source decides (`source_decides`): a source item only in `refreshed_at`; a host it keeps (same `source_ref` and `external_id`) only in label while it follows the source, host name, port, user, jump host, login and jump commands, the source's tags and the `source` marker; a feed's snippet, whatever it differs in. The next refresh sets it again. A person's edit (a rename, a note, a tag, a key) still makes a copy |
 | An edit | A different edit | The server's version under the id; the local one as a new item (new ULID, `rev` 0, dirty), pushed like any new item |
 | An edit | A deletion that got there first | The item is deleted; the edit survives as a copy |
 | A deletion | An edit that got there first | No copy; the item comes back with the server's edit |
@@ -298,7 +312,7 @@ Organization endpoints are listed in [Teams](teams.md); account and device endpo
 
 | Where | What |
 | --- | --- |
-| `crates/mg-store/src/sync.rs` (`cargo test -p mg-store`) | The engine against an in-memory server (`Fake`, two items per page): `items_flow_between_devices`, `concurrent_edits_keep_both_versions`, `edit_beats_delete_as_a_copy_and_delete_loses_to_edit`, `never_synced_deletes_are_not_uploaded`, `tampered_server_data_is_rejected_whole`, `rollback_is_refused`, `up_to_date_vaults_arent_pulled`, `a_device_with_its_own_vault_joins_an_account`, `a_shared_vault_cant_shadow_a_personal_item`, `kinds_from_newer_apps_are_kept_but_not_listed`, `token_and_config_roundtrip_and_disable`, `vaults_without_a_stored_recovery_proof_rotate_on_registration`, `adopt_requires_the_right_password_and_a_fresh_device`, and the blob tests (`session_log_blobs_upload_fetch_and_delete`, `refused_blobs_are_reported_and_retried`, `attachments_sync_and_go_with_their_host`) |
+| `crates/mg-store/src/sync.rs` (`cargo test -p mg-store`) | The engine against an in-memory server (`Fake`, two items per page): `items_flow_between_devices`, `concurrent_edits_keep_both_versions`, `edit_beats_delete_as_a_copy_and_delete_loses_to_edit`, `never_synced_deletes_are_not_uploaded`, `tampered_server_data_is_rejected_whole`, `rollback_is_refused`, `an_older_copy_of_an_item_is_refused`, `a_deleted_item_cant_be_brought_back`, `changes_from_apps_before_item_history_still_sync`, `strict_history_refuses_unversioned_changes`, `copies_from_before_item_history_keep_their_version`, `resealing_gives_a_new_version`, `deletions_sync_through_servers_that_drop_their_envelope`, `up_to_date_vaults_arent_pulled`, `a_device_with_its_own_vault_joins_an_account`, `a_shared_vault_cant_shadow_a_personal_item`, `kinds_from_newer_apps_are_kept_but_not_listed`, `token_and_config_roundtrip_and_disable`, `vaults_without_a_stored_recovery_proof_rotate_on_registration`, `adopt_requires_the_right_password_and_a_fresh_device`, and the blob tests (`session_log_blobs_upload_fetch_and_delete`, `refused_blobs_are_reported_and_retried`, `attachments_sync_and_go_with_their_host`) |
 | `crates/mg-sync/src/client.rs` | `payment_errors_say_what_to_do` |
 | `server/tests/e2e.rs`, `protocol.rs`, `account.rs` | Real vaults through the reference server over HTTP: a second device signs in and syncs, push, pull, conflicts and tombstones, refresh rotation and reuse detection, email verification and two-step verification where offered. `VAULT_SYNC_URL=https://… cargo test -p vault-sync-server --test protocol --test e2e --test account` runs them against another server |
 | `tools/vault-conform` | The `auth`, `account` and `vaults` groups check a server's side of all of this. See [Development](../development.md#conformance-suite) |

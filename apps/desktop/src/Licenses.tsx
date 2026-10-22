@@ -5,7 +5,7 @@ interface Component {
   version?: string;
   /** SPDX expression, as the package declares it. */
   license: string;
-  kind: "crate" | "npm" | "font" | "android";
+  kind: "crate" | "npm" | "font" | "data" | "android";
   url?: string;
   /** Indexes into `texts`. */
   texts: number[];
@@ -21,7 +21,7 @@ interface Notices {
 // missing under `npm run dev`. Loaded when this opens: it's most of a megabyte.
 const generated = import.meta.glob<Notices>("./generated/licenses.json", { import: "default" });
 
-const KINDS: Record<Component["kind"], string> = { crate: "Rust crate", npm: "npm package", font: "font", android: "Android library" };
+const KINDS: Record<Component["kind"], string> = { crate: "Rust crate", npm: "npm package", font: "font", data: "word list", android: "Android library" };
 
 /** About → Open-source licenses: the third-party components in this build, with their notices. */
 export function Licenses({ onBack }: { onBack: () => void }) {

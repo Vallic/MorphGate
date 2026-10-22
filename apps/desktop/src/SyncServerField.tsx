@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 /** MorphGate's hosted sync service, the default choice. */
 export const HOSTED_SERVER = "https://morphgate.com";
@@ -28,6 +28,13 @@ export function SyncServerField({ value, onChange, action }: Props) {
     setOwn(mine);
     onChange(mine ? address : HOSTED_SERVER);
   };
+  // Set from outside (the server an invite names): shown as chosen.
+  useEffect(() => {
+    if (value === (own ? address : HOSTED_SERVER)) return;
+    const mine = value !== HOSTED_SERVER;
+    setOwn(mine);
+    if (mine) setAddress(value);
+  }, [value]);
   return (
     <div className="stack sync-server">
       <span className="field-label">Sync server</span>

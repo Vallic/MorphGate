@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { keyType, type ChangedHostKey, type HostKeyPrompt } from "./api";
+import { copyText } from "./clipboard";
 
 const where = (host: string, port: number) => (port === 22 ? host : `[${host}]:${port}`);
 
@@ -51,6 +52,7 @@ export function HostKeyDialog({ prompt, onAnswer }: { prompt: HostKeyPrompt; onA
 export function HostKeyChangedDialog({ changed, label, onClose }: { changed: ChangedHostKey; label?: string; onClose: () => void }) {
   const ref = useRef<HTMLDialogElement>(null);
   const [copied, setCopied] = useState(false);
+  const [copyFailed, setCopyFailed] = useState(false);
 
   useEffect(() => {
     ref.current?.showModal();
@@ -66,11 +68,7 @@ export function HostKeyChangedDialog({ changed, label, onClose }: { changed: Cha
     .filter(Boolean)
     .join("\n");
 
-  const copy = () =>
-    void navigator.clipboard.writeText(details).then(
-      () => setCopied(true),
-      () => {},
-    );
+  const copy = () => void copyText(details).then((ok) => (ok ? setCopied(true) : setCopyFailed(true)));
 
   return (
     <dialog
@@ -133,7 +131,7 @@ export function HostKeyChangedDialog({ changed, label, onClose }: { changed: Cha
         </ol>
       </div>
       <div className="actions">
-        <button onClick={copy}>{copied ? "Copied" : "Copy details"}</button>
+        <button onClick={copy}>{copied ? "Copied" : copyFailed ? "Couldn't copy" : "Copy details"}</button>
         <button className="primary" autoFocus onClick={onClose}>
           Close
         </button>

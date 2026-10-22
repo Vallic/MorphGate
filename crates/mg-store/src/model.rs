@@ -202,6 +202,23 @@ pub struct HostSource {
     /// How it's reached when its source goes through the cloud rather than an address.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reach: Option<CloudReach>,
+    /// The server's host keys as its feed gives them (`ssh-ed25519 AAAA…`): trusted when
+    /// connecting to this host, without asking; a server with another key is refused.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub host_keys: Vec<String>,
+    /// The tags its feed gave it, among the host's: a refresh replaces these and keeps the
+    /// person's.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
+}
+
+/// Where a snippet a feed keeps came from: the feed decides it (it's read-only in the app).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SnippetSource {
+    /// The `cloud_source` item, in the same vault.
+    pub source_ref: String,
+    /// `feed:<id>`: what a refresh matches on.
+    pub external_id: String,
 }
 
 /// A machine reached through its cloud: what the command needs, never the command itself (a vault
@@ -260,12 +277,14 @@ impl CloudReach {
 }
 
 /// Hosts kept in step with a cloud provider (docs/features/cloud-sources.md): Vallic Cloud, AWS, Google
-/// Cloud, Azure, Hetzner Cloud or DigitalOcean. No credentials: each device signs in to Vallic itself
-/// and keeps that on the device; the others are listed with their CLI as the device has it set up.
+/// Cloud, Azure, Hetzner Cloud or DigitalOcean, or a feed. No cloud credentials: each device signs in
+/// to Vallic itself and keeps that on the device; the others are listed with their CLI as the device
+/// has it set up. A feed's token is the exception: it only reads a host list, and every device that
+/// refreshes needs it.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct CloudSource {
     pub label: String,
-    /// `vallic`, `aws`, `gcp`, `azure`, `hetzner` or `digitalocean`.
+    /// `vallic`, `aws`, `gcp`, `azure`, `hetzner`, `digitalocean` or `feed`.
     pub provider: String,
     /// The provider's address, when not its usual one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -301,6 +320,23 @@ pub struct CloudSource {
     /// resource group.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub group_tag: Option<String>,
+    /// A feed's address (`https://`, or `http://` on the device itself).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    /// The token a feed is read with (`Authorization: Bearer`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token: Option<String>,
+}
+
+impl CloudSource {
+    /// The same source, but for when it was last refreshed: what two devices refreshing at once
+    /// differ in.
+    pub fn same_but_refreshed(&self, other: &CloudSource) -> bool {
+        CloudSource {
+            refreshed_at: other.refreshed_at,
+            ..self.clone()
+        } == *other
+    }
 }
 
 impl Host {
@@ -440,6 +476,9 @@ pub struct Snippet {
     pub body: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tags: Vec<String>,
+    /// The feed that keeps it, if one does.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<SnippetSource>,
 }
 
 /// A saved tunnel through `host_ref`, started on demand.

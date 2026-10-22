@@ -30,6 +30,22 @@ pub enum Error {
     Untrusted(String),
     #[error("vault data is corrupt: {0}")]
     Corrupt(String),
+    /// A signed copy of an item older than one this device has seen: a server serving an old
+    /// envelope again.
+    #[error(
+        "the sync server sent an older copy of item {item} (version {remote}) than this device already has (version {seen}); refusing to roll it back"
+    )]
+    OlderItem {
+        item: String,
+        seen: i64,
+        remote: i64,
+    },
+    /// With strict item history: a change without a version, or a deletion without a
+    /// signature, to an item that has one.
+    #[error(
+        "the sync server sent a change to item {item} that isn't signed with a version; refusing it"
+    )]
+    UnversionedItem { item: String },
     #[error(transparent)]
     Crypto(#[from] mg_vault::Error),
     #[error("database: {0}")]

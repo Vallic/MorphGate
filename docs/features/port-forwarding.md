@@ -52,7 +52,7 @@ The form is valid with a host, a listen address, a listen port from 1 to 65535 (
 
 | Where | Control |
 | --- | --- |
-| Tunnels page (sidebar **Tunnels**, whose count reads "N on" while some run) | A switch per row ("Start tunnel" / "Stop tunnel"), **Edit**, **Select** for bulk delete and move, **New tunnel**. Rows read like `L :15432 → db:5432`, `R server:8080 → 127.0.0.1:3000` or `SOCKS :1080`, with "· N open" while connections are open, and "Through *host*" |
+| Tunnels page (sidebar **Tunnels**, whose count reads "N on" while some run) | A table: the switch first ("Start tunnel" / "Stop tunnel"), the name, what it forwards (`L :15432 → db:5432`, `R server:8080 → 127.0.0.1:3000` or `SOCKS :1080`), the host it goes through with its status, and its state ("Running", "Running · N open", "Stopped", "Starting…"); **Edit**, a "Running" filter, **Select** for bulk delete and move, **New tunnel** |
 | A group's page | The tunnels through its hosts, with the same switch |
 | The editor | **Save & start** |
 | Phone | The **More** screen lists tunnels with switches |

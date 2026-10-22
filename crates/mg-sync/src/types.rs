@@ -49,7 +49,8 @@ impl<'de> Deserialize<'de> for B64 {
 pub struct ApiError {
     pub code: String,
     pub message: String,
-    /// With `403 sso_required` and `403 device_approval_required`: the organization.
+    /// With `403 totp_setup_required`, `403 sso_required` and `403 device_approval_required`:
+    /// the organization.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub org_id: Option<String>,
     /// With `403 device_approval_required`: the calling device.
@@ -127,7 +128,14 @@ pub struct Features {
     /// Organizations can put their vaults behind their identity provider.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sso: Option<SsoFeatures>,
+    /// The server keeps the envelope a deletion carries (the item's signed deletion, at most
+    /// [`MAX_DELETION_ENVELOPE`] bytes) and returns it with the tombstone.
+    #[serde(default)]
+    pub signed_tombstones: bool,
 }
+
+/// The most a deletion's envelope may take (`PushItem::envelope` with `deleted`).
+pub const MAX_DELETION_ENVELOPE: usize = 1024;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BlobFeatures {

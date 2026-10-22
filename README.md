@@ -17,8 +17,12 @@ encrypted sync you can self-host.
 - **Sync**: `vault-sync/v1`, open OpenAPI contract — [`spec/openapi.yaml`](spec/openapi.yaml); client `crates/mg-sync`,
   self-hostable reference server [`server/`](server)
 
-Docs: [developer docs](docs/README.md) · [sync & crypto spec](docs/sync-crypto-spec.md) · [roadmap](ROADMAP.md) · [releasing](RELEASING.md) ·
+Docs: [developer docs](docs/README.md) · [sync & crypto spec](docs/sync-crypto-spec.md) · [self-host](https://morphgate.com/docs/self-hosting) · [roadmap](ROADMAP.md) · [releasing](RELEASING.md) ·
 [changelog](CHANGELOG.md)
+
+<p align="center">
+  <img src="assets/demo/morphgate.svg" alt="MorphGate: the Hosts page with hosts in groups; a click on web-1 opens its session, where uptime, git log and ls run">
+</p>
 
 ## Install
 

@@ -9,7 +9,7 @@ import { appendFileSync, chmodSync, copyFileSync, existsSync, mkdirSync, mkdtemp
 import { basename, dirname } from "node:path";
 import { createHash, createHmac, generateKeyPairSync } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { createVault, openAbout, session } from "./webdriver.mjs";
+import { createVault, openAbout, reload, session } from "./webdriver.mjs";
 
 const [app, shots, feed, key, port, user, version, next] = process.argv.slice(2);
 
@@ -60,6 +60,18 @@ async function quickConnect(s) {
   await s.exec(`document.querySelector("button[type=submit].primary").click(); return true`);
 }
 
+/** Clicks "Check now" in About and waits for that check to finish: the update shown before it
+ *  may be from the check at launch, and Install takes the one the last finished check found. */
+async function checkNow(s) {
+  await s.exec(`const b = [...document.querySelectorAll("button")].find((b) => b.innerText.includes("Check now") && !b.disabled);
+    if (!b) throw new Error("no enabled button Check now");
+    window.__checked = false;
+    new MutationObserver((_, o) => { if (b.innerText.includes("Check now")) { window.__checked = true; o.disconnect(); } })
+      .observe(b, { subtree: true, childList: true, characterData: true });
+    b.click(); return true`);
+  await s.wait(() => s.exec(`return window.__checked || null`), "the update check", 60000);
+}
+
 let s = await session(app);
 try {
   // A guessable master password is refused, and the form says why.
@@ -74,6 +86,21 @@ try {
   await s.screenshot(`${shots}/weak-password.png`);
   await createVault(s, PASSWORD, shots);
   ok("refused a guessable master password, saying why; created a vault with a strong one");
+
+  // Sync isn't offered with the new vault (the first screen had New account and Sign in), but a
+  // week on, once.
+  const offered = () => s.exec(`return !!document.querySelector("dialog.sync-offer")`);
+  await new Promise((r) => setTimeout(r, 1500));
+  assert.equal(await offered(), false, "sync offered with the new vault");
+  await reload(s, { weekLater: true });
+  await s.wait(() => s.exec(`return document.querySelector("dialog.sync-offer[open]") ? true : null`), "the offer to turn sync on");
+  await s.screenshot(`${shots}/sync-offer.png`);
+  await s.exec(`[...document.querySelectorAll("dialog.sync-offer button")].find((b) => b.innerText === "Not now").click(); return true`);
+  await s.wait(() => s.exec(`return document.querySelector("dialog.sync-offer") ? null : true`), "the offer to close");
+  await reload(s, { weekLater: true });
+  await new Promise((r) => setTimeout(r, 1500));
+  assert.equal(await offered(), false, "sync offered again after Not now");
+  ok("sync is offered a week after the vault was created, not with it, and once");
 
   // Quick connect with a key file; the new host key is trusted once.
   await quickConnect(s);
@@ -126,7 +153,7 @@ try {
   );
   await s.exec(`[...document.querySelectorAll(".sidebar-nav button")].find((b) => b.innerText.startsWith("Hosts")).click(); return true`);
   await s.wait(() => s.exec(`return document.querySelector(".panel.page h1")?.innerText === "Hosts" || null`), "the Hosts page");
-  await s.clickButton("Import…");
+  await s.addFrom("Import…");
   await s.wait(() => s.exec(`return document.querySelectorAll(".import-list li").length === 2 || null`), "the two hosts in ~/.ssh/config");
   const listed = await s.exec(`return document.querySelector(".import-hosts").innerText`);
   assert.match(listed, /Match blocks are skipped/);
@@ -179,7 +206,7 @@ try {
   writeFileSync(`${home}/.putty/sessions/router`, "HostName=10.0.0.1\nProtocol=telnet\n");
   await s.exec(`[...document.querySelectorAll(".sidebar-nav button")].find((b) => b.innerText.startsWith("Hosts")).click(); return true`);
   await s.wait(() => s.exec(`return document.querySelector(".panel.page h1")?.innerText === "Hosts" || null`), "the Hosts page");
-  await s.clickButton("Import…");
+  await s.addFrom("Import…");
   await s.clickButton("PuTTY");
   await s.wait(() => s.exec(`return document.querySelector(".import-list")?.innerText.includes("E2E PuTTY") || null`), "the PuTTY session");
   let page = await s.exec(`return document.querySelector(".import-hosts").innerText`);
@@ -363,6 +390,7 @@ try {
   // host key prompt, and the route bar says who vouched for it.
   await s.exec(`[...document.querySelectorAll(".sidebar-nav button")].find((b) => b.innerText.startsWith("Keys")).click(); return true`);
   await s.wait(() => s.exec(`return document.querySelector(".panel.page h1")?.innerText === "Keys" || null`), "the Keys page");
+  await s.pageTab("Host CAs");
   await s.clickButton("New host CA");
   await s.waitText("New host CA", ".panel");
   await s.typeLabelled("Name", "e2e host CA");
@@ -379,7 +407,7 @@ try {
       throw e;
     });
   assert.equal(saved, "ok", `saving the host CA: ${saved}`);
-  await s.wait(() => s.hasText(".panel strong", "e2e host CA"), "the host CA listed");
+  await s.wait(() => s.hasText(".panel .lname", "e2e host CA"), "the host CA listed");
   await s.exec(`[...document.querySelectorAll(".sidebar-nav button")].find((b) => b.innerText.startsWith("Hosts")).click(); return true`);
   await s.wait(() => s.exec(`return document.querySelector(".panel.page h1")?.innerText === "Hosts" || null`), "the Hosts page");
   await s.clickButton("New host");
@@ -439,7 +467,9 @@ try {
   // the key goes on the account; a refresh changes nothing; no Files for its hosts (no SFTP).
   await s.exec(`[...document.querySelectorAll(".sidebar-nav button")].find((b) => b.innerText.startsWith("Hosts")).click(); return true`);
   await s.wait(() => s.exec(`return document.querySelector(".panel.page h1")?.innerText === "Hosts" || null`), "the Hosts page");
-  await s.clickButton("Clouds…");
+  await s.addFrom("Clouds…");
+  // The page shows what to add once it has listed the sources.
+  await s.waitText("Connect Vallic Cloud", ".cloud-page", 30000);
   await s.clickButton("Connect Vallic Cloud");
   await s.waitText("WXYZ-1234", ".cloud-sign-in", 30000);
   await s.screenshot(`${shots}/vallic-sign-in.png`);
@@ -466,10 +496,10 @@ try {
   await s.exec(`[...document.querySelectorAll(".sidebar-nav button")].find((b) => b.innerText.startsWith("Hosts")).click(); return true`);
   await s.wait(() => s.exec(`return document.querySelector(".panel.page h1")?.innerText === "Hosts" || null`), "the Hosts page again");
   const vallicRow = await s.exec(
-    `const li = [...document.querySelectorAll(".panel.page li")].find((l) => l.innerText.includes("E2E Shop · Production"));
-     return li ? [...li.querySelectorAll("button")].map((b) => b.innerText).join("|") : null`,
+    `const row = [...document.querySelectorAll(".panel.page [role=row]")].find((r) => r.innerText.includes("E2E Shop · Production"));
+     return row ? [...row.querySelectorAll("button")].map((b) => b.getAttribute("aria-label") || b.innerText).join("|") : null`,
   );
-  assert.ok(vallicRow && !vallicRow.split("|").includes("Files"), `no Files for a Vallic host: ${vallicRow}`);
+  assert.ok(vallicRow && !vallicRow.split("|").includes("Browse files (SFTP)"), `no Files for a Vallic host: ${vallicRow}`);
   // Its SSH forwards no ports: the tunnel editor doesn't offer it.
   await s.exec(`[...document.querySelectorAll(".sidebar-nav button")].find((b) => b.innerText.startsWith("Tunnels")).click(); return true`);
   await s.clickButton("New tunnel");
@@ -499,7 +529,7 @@ try {
   // the stopped one without an address waits.
   await s.exec(`[...document.querySelectorAll(".sidebar-nav button")].find((b) => b.innerText.startsWith("Hosts")).click(); return true`);
   await s.wait(() => s.exec(`return document.querySelector(".panel.page h1")?.innerText === "Hosts" || null`), "the Hosts page");
-  await s.clickButton("Clouds…");
+  await s.addFrom("Clouds…");
   // The page shows what to add once it has listed the sources.
   await s.waitText("Add AWS", ".cloud-page", 30000);
   await s.clickButton("Add AWS");
@@ -530,7 +560,8 @@ try {
   // connection goes through `aws ssm start-session` (the stand-in relays it to this sshd).
   await s.exec(`[...document.querySelectorAll(".sidebar-nav button")].find((b) => b.innerText.startsWith("Hosts")).click(); return true`);
   await s.wait(() => s.exec(`return document.querySelector(".panel.page h1")?.innerText === "Hosts" || null`), "the Hosts page");
-  await s.clickButton("Clouds…");
+  await s.addFrom("Clouds…");
+  await s.waitText("123456789012", ".cloud-source", 30000);
   await s.exec(
     `const card = [...document.querySelectorAll(".cloud-source")].find((x) => x.innerText.includes("123456789012"));
      [...card.querySelectorAll("button")].find((b) => b.innerText === "Settings…").click(); return true`,
@@ -570,7 +601,7 @@ try {
   // for the source; its droplet (this sshd) connects.
   await s.exec(`[...document.querySelectorAll(".sidebar-nav button")].find((b) => b.innerText.startsWith("Hosts")).click(); return true`);
   await s.wait(() => s.exec(`return document.querySelector(".panel.page h1")?.innerText === "Hosts" || null`), "the Hosts page");
-  await s.clickButton("Clouds…");
+  await s.addFrom("Clouds…");
   await s.waitText("Add DigitalOcean", ".cloud-page", 30000);
   await s.clickButton("Add DigitalOcean");
   await s.waitText("is signed in as e2e@example.com (E2E)", ".cloud-adding", 30000);
@@ -606,6 +637,127 @@ try {
   await s.click(".tab.active .close");
   ok("added DigitalOcean through its CLI: its droplet became a host and connected");
 
+  // A feed (host-feed.mjs): Add from… → Feed URL…, read with its token; its host connects with
+  // the host key the feed lists (nothing asks), another listed with the wrong key is refused, an
+  // invalid entry is skipped and said; its snippet is read-only, and once the feed changes it,
+  // running it asks first.
+  await s.exec(`[...document.querySelectorAll(".sidebar-nav button")].find((b) => b.innerText.startsWith("Hosts")).click(); return true`);
+  await s.wait(() => s.exec(`return document.querySelector(".panel.page h1")?.innerText === "Hosts" || null`), "the Hosts page");
+  await s.addFrom("Feed URL…");
+  await s.waitText("Add a feed", ".cloud-adding", 30000);
+  await s.typeLabelled("Address", process.env.E2E_HOST_FEED);
+  await s.typeLabelled("Token", "wrong-token");
+  await s.clickButton("Add and read the feed");
+  await s.waitText("refused the token", ".cloud-page > .error", 30000);
+  await s.typeLabelled("Token", process.env.E2E_HOST_FEED_TOKEN);
+  await s.clickButton("Add and read the feed");
+  // Titles are uppercased by CSS (innerText follows it).
+  const feedCard = `[...document.querySelectorAll(".cloud-source")].find((x) => x.innerText.toLowerCase().includes("e2e operations"))`;
+  const feedAdded = await s
+    .wait(
+      () => s.exec(`return ${feedCard}?.innerText.includes("2 hosts added") ? "ok" : document.querySelector(".cloud-page > .error, .cloud-adding .error")?.innerText || null`),
+      "the feed source",
+      30000,
+    )
+    .catch(async (e) => {
+      await s.screenshot(`${shots}/feed-not-added.png`);
+      throw e;
+    });
+  assert.equal(feedAdded, "ok", `adding the feed: ${feedAdded}`);
+  page = await s.exec(`return ${feedCard}.innerText`);
+  assert.match(page, /1 snippet added/);
+  assert.match(page, /Skipped: broken: the host name/);
+  assert.match(page, /token …cdef/);
+  assert.ok(!page.includes(process.env.E2E_HOST_FEED_TOKEN), "the token isn't shown");
+  await s.screenshot(`${shots}/feed-source.png`);
+  await s.clickButton("Close");
+  await s.exec(
+    `[...document.querySelectorAll(".sidebar .list li")].find((l) => l.querySelector(".row-title")?.innerText === "e2e-feed-web").querySelector(".row-main").click(); return true`,
+  );
+  await s.wait(
+    () =>
+      s.exec(
+        `if (document.querySelector("dialog.hostkey[open]")) throw new Error("asked to trust the feed's host");
+         const r = document.querySelector(".terminal:not(.xterm):not([hidden]) .xterm-rows"); return r && /[$#]\\s*$/m.test(r.innerText) ? true : null`,
+      ),
+    "a shell on the feed's host, nothing asked",
+    60000,
+  );
+  await s.exec(
+    `[...document.querySelectorAll(".sidebar .list li")].find((l) => l.querySelector(".row-title")?.innerText === "e2e-feed-wrong").querySelector(".row-main").click(); return true`,
+  );
+  // The terminal wraps mid-word: compared without whitespace.
+  const refusedText = await s
+    .wait(
+      () =>
+        s.exec(
+          `const r = (document.querySelector(".terminal:not(.xterm):not([hidden]) .xterm-rows")?.innerText ?? "").replace(/\\s+/g, "");
+           return r.includes("isn'toneE2Eoperationslistsforit:refused") ? r : null`,
+        ),
+      "the wrong key refused",
+      60000,
+    )
+    .catch(async (e) => {
+      await s.screenshot(`${shots}/feed-wrong-key.png`);
+      throw e;
+    });
+  assert.ok(!refusedText.includes("$"), "no shell on the wrongly listed host");
+  await s.click(".tab.active .close");
+  // Back to the session on e2e-feed-web: where snippets go.
+  await s.exec(`[...document.querySelectorAll(".tab")].find((t) => t.querySelector(".label")?.innerText === "e2e-feed-web").click(); return true`);
+  ok("added a feed (a wrong token said first): its host connected with the key the feed lists, one listed with another key was refused, an invalid entry skipped");
+
+  // Its snippet, from the Snippets page into the session on e2e-feed-web.
+  await s.exec(`[...document.querySelectorAll(".sidebar-nav button")].find((b) => b.innerText.startsWith("Snippets")).click(); return true`);
+  await s.wait(() => s.hasText(".panel .lname", "E2E hello"), "the feed's snippet");
+  const feedRow = `[...document.querySelectorAll(".panel.page [role=row]")].find((r) => r.innerText.includes("E2E hello"))`;
+  assert.match(await s.exec(`return ${feedRow}.innerText`), /E2E operations/i);
+  const runFeedSnippet = () =>
+    s.exec(`[...${feedRow}.querySelectorAll("button")].find((b) => b.innerText === "Run").click(); return true`);
+  await runFeedSnippet();
+  await s.wait(
+    () => s.exec(`const r = document.querySelector(".terminal:not(.xterm):not([hidden]) .xterm-rows"); return r && /^e2e-feed-one\s*$/m.test(r.innerText) ? true : null`),
+    "the snippet's output",
+    30000,
+  );
+  // Read-only: no Save, a copy instead.
+  await s.exec(`[...document.querySelectorAll(".sidebar-nav button")].find((b) => b.innerText.startsWith("Snippets")).click(); return true`);
+  await s.wait(() => s.hasText(".panel .lname", "E2E hello"), "the Snippets page again");
+  await s.exec(`${feedRow}.querySelector(".lnamebtn").click(); return true`);
+  await s.waitText("it changes there, and is read-only here", ".panel", 30000);
+  assert.ok(!(await s.exec(`return [...document.querySelectorAll(".panel button")].some((b) => b.innerText.startsWith("Save"))`)), "no Save");
+  await s.clickButton("Close");
+
+  // The feed changes the snippet: a refresh brings it, and running it asks first.
+  await fetch(`${new URL(process.env.E2E_HOST_FEED).origin}/e2e/next`, { method: "POST" });
+  await s.exec(`[...document.querySelectorAll(".sidebar-nav button")].find((b) => b.innerText.startsWith("Hosts")).click(); return true`);
+  await s.wait(() => s.exec(`return document.querySelector(".panel.page h1")?.innerText === "Hosts" || null`), "the Hosts page");
+  await s.addFrom("Clouds…");
+  await s.waitText("E2E operations", ".cloud-source", 30000);
+  await s.exec(`[...${feedCard}.querySelectorAll("button")].find((b) => b.innerText === "Refresh").click(); return true`);
+  await s.wait(() => s.exec(`return ${feedCard}?.innerText.match(/1 gone from the feed, 1 snippet changed/) ? true : null`), "the feed's next version", 30000);
+  await s.clickButton("Close");
+  await s.exec(`[...document.querySelectorAll(".sidebar-nav button")].find((b) => b.innerText.startsWith("Snippets")).click(); return true`);
+  await s.wait(() => s.hasText(".panel .lname", "E2E hello"), "the Snippets page");
+  await runFeedSnippet();
+  await s.waitText("E2E hello changed", "dialog.snippet-check", 30000);
+  assert.match(await s.exec(`return document.querySelector("dialog.snippet-check").innerText`), /Changed by E2E operations[\s\S]*echo e2e-feed-two/);
+  await s.screenshot(`${shots}/feed-snippet-changed.png`);
+  await s.clickButton("Run it");
+  await s.wait(
+    () => s.exec(`const r = document.querySelector(".terminal:not(.xterm):not([hidden]) .xterm-rows"); return r && /^e2e-feed-two\s*$/m.test(r.innerText) ? true : null`),
+    "the changed snippet's output",
+    30000,
+  );
+  // Sent once as it is now: the next run doesn't ask.
+  await s.exec(`[...document.querySelectorAll(".sidebar-nav button")].find((b) => b.innerText.startsWith("Snippets")).click(); return true`);
+  await s.wait(() => s.hasText(".panel .lname", "E2E hello"), "the Snippets page");
+  await runFeedSnippet();
+  await new Promise((r) => setTimeout(r, 1000));
+  assert.ok(!(await s.exec(`return !!document.querySelector("dialog.snippet-check[open]")`)), "not asked again");
+  await s.click(".tab.active .close");
+  ok("the feed's snippet ran, read-only with a copy offered; once the feed changed it, running it asked first (and only once)");
+
   // Several hosts at once: the CSV and Royal TS ones (nothing later uses them) into one group,
   // then both deleted.
   await s.exec(`[...document.querySelectorAll(".sidebar-nav button")].find((b) => b.innerText.startsWith("Hosts")).click(); return true`);
@@ -613,8 +765,8 @@ try {
   await s.clickButton("Select");
   const pick = (label) =>
     s.exec(
-      `const li = [...document.querySelectorAll(".panel.page li.picking")].find((l) => l.querySelector("strong")?.innerText === arguments[0]);
-       if (!li) throw new Error("no row " + arguments[0]); li.click(); return true`,
+      `const row = [...document.querySelectorAll(".panel.page [role=row].picking")].find((r) => r.querySelector(".lname")?.innerText === arguments[0]);
+       if (!row) throw new Error("no row " + arguments[0]); row.click(); return true`,
       label,
     );
   await pick("e2e-csv");
@@ -625,8 +777,8 @@ try {
   await s.waitText("Moved 2 hosts.", ".select-bar-wrap", 30000);
   await s.wait(
     () =>
-      s.exec(`const section = [...document.querySelectorAll(".panel.page section")].find((x) => x.querySelector(".group-title")?.innerText.includes("E2E Lab"));
-              const names = section ? [...section.querySelectorAll("li strong")].map((x) => x.innerText) : [];
+      s.exec(`const section = [...document.querySelectorAll(".panel.page .lsection")].find((x) => x.querySelector(".lghead")?.innerText.includes("E2E Lab"));
+              const names = section ? [...section.querySelectorAll(".lname")].map((x) => x.innerText) : [];
               return names.includes("e2e-csv") && names.includes("e2e-royal") || null`),
     "both hosts in E2E Lab",
   );
@@ -843,6 +995,13 @@ try {
   assert.match(await openAbout(s), new RegExp(`Version ${version} · AppImage`));
   ok(`About: ${version}, AppImage`);
 
+  // Its documentation and its source code, in the browser (browser.sh notes what it's given).
+  await s.clickButton("Documentation ↗");
+  await s.clickButton("Source code on GitHub ↗");
+  const opened = () => (existsSync(process.env.E2E_BROWSER_LOG) ? readFileSync(process.env.E2E_BROWSER_LOG, "utf8") : "");
+  await s.wait(() => (/^https:\/\/morphgate\.com\/docs$/m.test(opened()) && /^https:\/\/github\.com\/Vallic\/MorphGate$/m.test(opened())) || null, "the documentation and the source code opened");
+  ok("About opens the documentation and the source code");
+
   // The third-party notices that come with the app: a crate's, from the generated list.
   await s.clickButton("Open-source licenses");
   await s.wait(() => s.exec(`return document.querySelector(".licenses-list li") ? true : null`), "the license list");
@@ -858,7 +1017,7 @@ try {
   // A tampered download is refused and the AppImage stays as it was.
   const before = sha(app);
   copyFileSync(`${feed}/latest-tampered.json`, `${feed}/latest.json`);
-  await s.clickButton("Check now");
+  await checkNow(s);
   await s.waitText(`MorphGate ${next} is available`);
   await s.clickButton("Install and restart");
   assert.match(await s.wait(s.panelError, "the refusal", 120000), /signature/);
@@ -876,7 +1035,7 @@ try {
 
   // The signed update installs, and the app restarts by itself.
   copyFileSync(`${feed}/latest-good.json`, `${feed}/latest.json`);
-  await s.clickButton("Check now");
+  await checkNow(s);
   await s.waitText(`MorphGate ${next} is available`);
   await s.screenshot(`${shots}/update-available.png`);
   await s.clickButton("Install and restart");
@@ -918,8 +1077,11 @@ try {
   await s.type("input[autocomplete=current-password]", PASSWORD);
   await s.exec(`document.querySelector("form button[type=submit]").click(); return true`);
   await s.wait(() => s.exec(`return document.querySelector("button.brand") ? true : null`), "the workspace", 60000);
+  // A vault with hosts opens on them (with none, on quick connect).
+  await s.wait(() => s.exec(`return document.querySelectorAll(".sidebar .row-title").length > 0 || null`), "the vault's hosts", 30000);
+  await s.wait(() => s.exec(`return document.querySelector(".panel.page h1")?.innerText === "Hosts" || null`), "the Hosts page as home");
   assert.match(await openAbout(s), new RegExp(`Version ${next} · AppImage`));
-  await s.clickButton("Check now");
+  await checkNow(s);
   await s.waitText("up to date");
   await s.screenshot(`${shots}/updated.png`);
   ok(`unlocked the same vault in ${next}, which is up to date`);

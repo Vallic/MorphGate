@@ -5,10 +5,11 @@ import {
   platformName,
   errorText,
   isTotpRequired,
-  openLink,
   ownsTeam,
   sync,
+  totpTitle,
   type OrgInfo,
+  type SsoNeed,
   type SyncAccount,
   type SyncDevice,
   type SyncPlan,
@@ -20,6 +21,7 @@ import {
 import { Page } from "./Page";
 import { HOSTED_SERVER, SyncServerField } from "./SyncServerField";
 import { isTotpCode, TotpCode } from "./TotpCode";
+import { TermsCheck, TermsLinks } from "./Terms";
 import { RecoveryCode } from "./VaultGate";
 import { mobileOs } from "./mobile/useMobile";
 
@@ -30,9 +32,11 @@ interface Props {
   onChanged: () => void;
   onClose: () => void;
   onOpenTeams: () => void;
+  /** Opened to turn on two-step verification (teams wait for it). */
+  startTotp?: boolean;
 }
 
-export function SyncPanel({ status, orgs, onChanged, onClose, onOpenTeams }: Props) {
+export function SyncPanel({ status, orgs, onChanged, onClose, onOpenTeams, startTotp }: Props) {
   // The address of the account just deleted from here.
   const [deleted, setDeleted] = useState("");
   // The account this device just joined: what that did to its master password is said once more.
@@ -50,6 +54,8 @@ export function SyncPanel({ status, orgs, onChanged, onClose, onOpenTeams }: Pro
           !status.signedOut && (
             <Account
               round={status.lastSyncAt}
+              totpRequired={status.totpRequired}
+              startTotp={startTotp}
               owned={orgs.filter((o) => o.role === "owner")}
               onChanged={onChanged}
               onDeleted={onDeleted}
@@ -74,8 +80,42 @@ export function SyncPanel({ status, orgs, onChanged, onClose, onOpenTeams }: Pro
   );
 }
 
-/** First run: the same setup, offered once in a dialog right after the vault is created. `later`
- * says where Sync is found afterwards. */
+// A vault created without sync gets the offer once, a week on (the first screen had New account
+// and Sign in already): when, on this device.
+const OFFER_AT = "morphgate.sync-offer-at";
+const WEEK = 7 * 24 * 60 * 60 * 1000;
+
+/** When `SyncOffer` shows: a week after a vault was created without sync, then never again. */
+export const syncOfferTime = {
+  /** A vault without sync, created just now. */
+  schedule() {
+    try {
+      localStorage.setItem(OFFER_AT, String(Date.now() + WEEK));
+    } catch {
+      // No offer, then: Sync stays in the sidebar.
+    }
+  },
+  /** Whether its week is up. */
+  due() {
+    try {
+      const at = Number(localStorage.getItem(OFFER_AT));
+      return at > 0 && at <= Date.now();
+    } catch {
+      return false;
+    }
+  },
+  /** Answered, or not wanted any more (sync is on, or the device started with an account). */
+  forget() {
+    try {
+      localStorage.removeItem(OFFER_AT);
+    } catch {
+      // Nothing to forget.
+    }
+  },
+};
+
+/** The same setup in a dialog, offered once a week after a vault was created without sync
+ * (`syncOfferTime`). `later` says where Sync is found afterwards. */
 export function SyncOffer({ later, onDone }: { later: string; onDone: (enabled: boolean) => void }) {
   const ref = useRef<HTMLDialogElement>(null);
   const [joinedAs, setJoinedAs] = useState("");
@@ -464,32 +504,6 @@ function Setup({ onChanged, onJoined }: { onChanged: () => void; onJoined: (emai
   );
 }
 
-/** The server's terms of use and privacy policy, each opening in the browser. */
-function TermsLinks({ terms }: { terms: SyncTerms }) {
-  return (
-    <>
-      <button type="button" className="link inline" onClick={() => void openLink(terms.termsUrl)}>
-        terms of use
-      </button>{" "}
-      and the{" "}
-      <button type="button" className="link inline" onClick={() => void openLink(terms.privacyUrl)}>
-        privacy policy
-      </button>
-    </>
-  );
-}
-
-function TermsCheck({ terms, accepted, onChange }: { terms: SyncTerms; accepted: boolean; onChange: (v: boolean) => void }) {
-  return (
-    <label className="check terms-check">
-      <input type="checkbox" checked={accepted} onChange={(e) => onChange(e.target.checked)} />
-      <span>
-        I accept the <TermsLinks terms={terms} />.
-      </span>
-    </label>
-  );
-}
-
 /** The server's terms changed since this account accepted them. */
 function TermsUpdate({ terms, onDone }: { terms: SyncTerms; onDone: () => void }) {
   const { busy, error, run } = useStep();
@@ -610,12 +624,17 @@ function planText(p: SyncPlan): string {
  * again after each sync round (`round`): a plan bought or ended meanwhile shows. */
 function Account({
   round,
+  totpRequired,
+  startTotp,
   owned,
   onChanged,
   onDeleted,
   onOpenTeams,
 }: {
   round: number | null;
+  /** Teams whose vaults wait until the account has two-step verification. */
+  totpRequired: SsoNeed[];
+  startTotp?: boolean;
   owned: OrgInfo[];
   onChanged: () => void;
   onDeleted: (email: string) => void;
@@ -624,7 +643,7 @@ function Account({
   const [account, setAccount] = useState<SyncAccount | null>(null);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState("");
-  const [mode, setMode] = useState<"" | "totp-on" | "totp-off" | "email" | "delete">("");
+  const [mode, setMode] = useState<"" | "totp-on" | "totp-off" | "email" | "delete">(startTotp ? "totp-on" : "");
   const exportData = () => {
     setError("");
     setSaved("");
@@ -644,6 +663,8 @@ function Account({
   const cancel = () => setMode("");
 
   if (!account) return error ? <p className="error">{error}</p> : null;
+  // Asked to turn it on, but it's on already (from another device, say).
+  const shown = mode === "totp-on" && account.totpEnabled ? "" : mode;
   const facts = account.plan || account.emailVerified === false || account.totp;
   return (
     <div className="stack">
@@ -671,19 +692,20 @@ function Account({
         </dl>
       )}
       {error && <p className="error">{error}</p>}
-      {account.termsToAccept && mode === "" && <TermsUpdate terms={account.termsToAccept} onDone={done} />}
+      {account.termsToAccept && shown === "" && <TermsUpdate terms={account.termsToAccept} onDone={done} />}
       {saved && (
         <p className="ok">
           Saved {saved}: what the server keeps about your account. Your hosts and keys aren't in it; the server can't read them.
         </p>
       )}
-      {mode === "totp-on" && <TotpOn onDone={done} onCancel={cancel} />}
-      {mode === "totp-off" && <TotpOff onDone={done} onCancel={cancel} />}
-      {mode === "email" && <EmailChange onDone={done} onCancel={cancel} />}
-      {mode === "delete" && (
+      {totpRequired.length > 0 && !account.totpEnabled && <p className="notice-box warn">{totpTitle(totpRequired)}.</p>}
+      {shown === "totp-on" && <TotpOn onDone={done} onCancel={cancel} />}
+      {shown === "totp-off" && <TotpOff onDone={done} onCancel={cancel} />}
+      {shown === "email" && <EmailChange onDone={done} onCancel={cancel} />}
+      {shown === "delete" && (
         <DeleteAccount email={account.email} owned={owned} onDone={() => onDeleted(account.email)} onCancel={cancel} onOpenTeams={onOpenTeams} />
       )}
-      {mode === "" && (
+      {shown === "" && (
         <div className="row wrap">
           {account.totp && (
             <button type="button" className="secondary" onClick={() => setMode(account.totpEnabled ? "totp-off" : "totp-on")}>
@@ -708,7 +730,7 @@ function Account({
           </button>
         </div>
       )}
-      {mode === "" && account.totp && !account.totpEnabled && (
+      {shown === "" && account.totp && !account.totpEnabled && (
         <p className="hint">With two-step verification, signing in on a new device also needs a code from an authenticator app.</p>
       )}
     </div>

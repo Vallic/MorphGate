@@ -25,6 +25,7 @@ In a team's member list, **Remove…** next to a confirmed member opens the page
 | Identity | other item | "Password of {label}" when it has a saved password |
 | SSH key | SSH key | "SSH key {label}", with "used by {hosts}": hosts that log in with it, directly or through an identity or group (`effective_host()`) |
 | VPN profile | VPN | "VPN profile {label}" |
+| Feed ([Cloud sources](cloud-sources.md#feeds)) | other item | "Rotate the token for {label} (a feed: change it where the feed is published, then in the source's settings)": its token is in the vault |
 | Member key | not counted | |
 | Anything else | other item | |
 
@@ -59,7 +60,7 @@ The file is edited with these safety checks (`authorized_keys.rs`, `edit_keys()`
 
 ## 4. Change what they could see
 
-A checklist of the secrets from step 1; the ticks belong to the page and are gone when it closes. Passwords and VPN profiles are changed by hand (on the server or the VPN provider, then in the item). SSH keys have **Replace key** ("Replacing…"); a replaced key shows "replaced ({fingerprint})", and "; the old key is still on {hosts}" when removing it failed somewhere. A failure shows its message in the row.
+A checklist of the secrets from step 1; the ticks belong to the page and are gone when it closes. Passwords, VPN profiles and feed tokens are changed by hand (on the server, the VPN provider or where the feed is published, then in the item or the feed's **Settings…**). SSH keys have **Replace key** ("Replacing…"); a replaced key shows "replaced ({fingerprint})", and "; the old key is still on {hosts}" when removing it failed somewhere. A failure shows its message in the row.
 
 ### Replacing a shared SSH key
 

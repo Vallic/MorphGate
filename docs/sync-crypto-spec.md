@@ -24,13 +24,13 @@ A fully compromised server, ours or a self-hoster's, learns metadata only: accou
 
 | Adversary | Can | Cannot |
 | --- | --- | --- |
-| Malicious / breached server | Read ciphertext and metadata, drop or replay old blobs, deny service | Decrypt items, forge items (AEAD + signatures), make a client accept a vault revision below one it has seen |
+| Malicious / breached server | Read ciphertext and metadata, drop or replay old blobs, deny service | Decrypt items, forge items (AEAD + signatures), make a client accept a vault revision below one it has seen, or a signed copy of an item older than one it has seen ([item history](#sync-protocol)) |
 | Network attacker | Nothing beyond TLS failure | Anything: TLS required (the client refuses plain `http://` except to this computer), plus E2E |
 | Stolen unlocked device | Everything in that vault | Survive revocation for future changes |
 | Stolen locked device | Offline brute-force of master password | Succeed quickly (Argon2id, high cost) |
 | Malicious self-host operator | Same as breached server | Same as breached server |
 
-**Rollback defense.** Each client remembers the highest vault revision it has seen. A server answering with a lower one is flagged as an error, not silently accepted. The rollback guard covers the vault's revision, not each item's history.
+**Rollback defense.** Each client remembers the highest vault revision it has seen. A server answering with a lower one is flagged as an error, not silently accepted. Items have a guard of their own: every write carries a version inside its signed envelope, deletions are signed, and a client refuses a copy of an item older than one it has seen (Item history, under Sync protocol).
 
 **KDF bounds.** KDF parameters come from the server at prelogin, so the client enforces floors (≥ 64 MiB, ≥ 2 passes, ≥ 16-byte salt) and refuses to derive below them, and ceilings (≤ 1 GiB, ≤ 10 passes, ≤ 64-byte salt), so a server can't make a device allocate or compute without bound.
 
@@ -96,6 +96,8 @@ All HKDF is HKDF-SHA256; all info strings are prefixed `morphgate/v1/`.
 | Blob | `0x01 ‖ key_id(16) ‖ nonce(24) ‖ XChaCha20-Poly1305(VK, aad, pad₄ₖ(plaintext))`, aad = `blob ‖ u16 len ‖ vault_id ‖ u16 len ‖ kind ‖ 0x01 ‖ key_id`; named by lowercase hex SHA-256 of the whole blob; no signature (the signed item that refers to it holds the hash) |
 | Envelope AAD | `u16 len ‖ vault_id ‖ u16 len ‖ item_id ‖ u16 schema_version ‖ 0x01 ‖ key_id` |
 | Envelope signature | Ed25519 over `envelope-sig ‖ u32 len(aad) ‖ aad ‖ version ‖ key_id ‖ nonce ‖ ct`; verified before decrypting |
+| Item plaintext | The item's JSON (Data model) with `item_version`: the time of the write in Unix milliseconds, or one more than the highest version the writer knows of the item when that is larger |
+| Deletion | An envelope of the deleted item (same AAD) whose plaintext is `{"type":"deleted","item_version":n}` |
 | Padding | ISO/IEC 7816-4 (`0x80` then zeros) to a multiple of 256 bytes |
 | Vault `meta` | An envelope with item id `vault-meta` (JSON `{name, directory?}`), under the vault key, signed by the vault's creator (`created_by`) |
 
@@ -132,21 +134,21 @@ The server knows three things: accounts, vaults and items. Items are opaque enve
 
 **Plaintext item types (client-only schema, `schema_version` 1)**
 
-Serialized as JSON with a `type` tag, then sealed into an envelope.
+Serialized as JSON with a `type` tag and the write's `item_version` (Item history), then sealed into an envelope.
 
 | Type | Fields | Status |
 | --- | --- | --- |
-| `host` | label, hostname, port, user, auth (`password {password?}` \| `key {key_ref}` \| `agent`), jump_ref? (host to tunnel through, chains allowed, no loops, ≤ 8 deep), vpn_ref? (VPN for the first hop), theme_ref? (a `terminal_theme` in the same vault, or `builtin:<id>` for one built into the app), record_sessions?, keep_session? (attach to a tmux session on the server), group_ref? (a `host_group`), identity_ref? (an `identity`, instead of user and auth; user may then be empty), tags, notes | Implemented |
+| `host` | label, hostname, port, user, auth (`password {password?}` \| `key {key_ref}` \| `agent`), jump_ref? (host to tunnel through, chains allowed, no loops, ≤ 8 deep), vpn_ref? (VPN for the first hop), theme_ref? (a `terminal_theme` in the same vault, or `builtin:<id>` for one built into the app), record_sessions?, keep_session? (attach to a tmux session on the server), group_ref? (a `host_group`), identity_ref? (an `identity`, instead of user and auth; user may then be empty), tags, notes, source? (the `cloud_source` that keeps it: source_ref, external_id, label, gone?, state?, host_keys? (its server's keys, listed by a feed), tags? (the ones the feed gave it)) | Implemented |
 | `vpn` | label, vpn (`wireguard {config}`: wg-quick text incl. private key) | Implemented |
 | `ssh_key` | label, private_key (OpenSSH/PEM, as imported), passphrase?, public_key, algorithm, fingerprint | Implemented |
-| `snippet` | name, body, tags | Implemented (storage only) |
+| `snippet` | name, body, tags, source? (the feed that keeps it: source_ref, external_id) | Implemented (storage only) |
 | `identity` | label, user, auth (as a host's) — shared credentials hosts refer to | Implemented |
 | `host_group` | name, identity_ref?, jump_ref?, vpn_ref?, theme_ref?, keep_session? — a host takes what it leaves empty from its group (credentials only when its user is empty); deleting a group makes those values the hosts' own | Implemented |
 | `attachment` | name, host_ref?, blob, size (see Blobs) | Implemented |
 | `session_log` | see Blobs | Implemented |
 | `port_forward` | label, host_ref, rule (`local` \| `remote` {bind_host, bind_port, target_host, target_port} \| `dynamic` {bind_host, bind_port}) | Implemented |
 | `known_host` | host pattern, key type, public key | Planned (today: local known_hosts file) |
-| `cloud_source` | label, provider, endpoint?, key_ref?, account — a cloud account whose machines become hosts, kept in step with it ([cloud sources](features/cloud-sources.md)) | Implemented |
+| `cloud_source` | label, provider, endpoint?, key_ref?, account, url?, token? — a cloud account or feed whose machines become hosts, kept in step with it ([cloud sources](features/cloud-sources.md)) | Implemented |
 | `host_ca` | label, public_key, hosts (patterns) — a CA whose signed host keys are trusted for those hosts (`@cert-authority`) | Implemented |
 | `terminal_theme` | name, background, foreground, cursor, cursor_accent, selection_background, selection_foreground?, ansi (16 colors), all `#rrggbb`; imported from Ghostty, Alacritty, iTerm2 or Windows Terminal theme files | Implemented |
 | `member_key` | account_id, public_key (OpenSSH `type base64`), label, sig (member key signature, hex) — only in an organization's directory vault | Implemented |
@@ -162,7 +164,7 @@ The client is offline-first: the vault exists on the device before any server is
 - One SQLite file in the app data dir (`vault.sqlite3`, mode 0600, `secure_delete` on).
 - `account`: KDF params, public keys, `wrapped_private_keys`, `wrapped_private_keys_rk` (same values the server gets at register).
 - `vaults`: id, `key_id`, `wrapped_vault_key`, `head_rev` (highest server revision seen, for the rollback guard).
-- `items`: id, vault_id, envelope (NULL for tombstones), `deleted`, `rev` (server rev the copy is based on; 0 = never synced), `dirty` (unpushed local change), `updated_at`.
+- `items`: id, vault_id, envelope (NULL for tombstones, except a deletion made on this device, which keeps its signed envelope), `deleted`, `rev` (server rev the copy is based on; 0 = never synced), `dirty` (unpushed local change), `updated_at`, `version` (the one in the envelope) and `seen_version` (the one of the last copy the server confirmed).
 - Nothing typed is stored in plaintext: hostnames, users, passwords and keys exist only inside envelopes.
 - Unlock = Argon2id + unwrap account keys + open vault key, all in memory. Lock drops every key and closes open sessions.
 - Optional per device: a random device key in the OS keychain (`device_unlock` holds the account keys wrapped under HKDF(device key, `device-kek`)). It unlocks without the master password, survives password changes and recovery, never syncs, and is tried automatically only at app launch. The device can also require Touch ID, Windows Hello or polkit (Linux) before the key is read. That is a check made by the app: it stops someone at an unlocked computer, not malware running as the user.
@@ -175,7 +177,7 @@ The client is offline-first: the vault exists on the device before any server is
 Sync is a per-vault revision log. Pull is "give me everything after rev N". Push is a batch with optimistic concurrency per item. Conflicts resolve on the client, because only the client can read the data.
 
 1. **Pull.** `GET /vaults/{id}/changes?since={rev}&limit=500` returns items with `rev > since` (tombstones included) plus `head_rev`. Page until `has_more = false`.
-2. **Decrypt & apply.** Verify signature, decrypt, merge into local SQLite. Store `last_rev`.
+2. **Decrypt & apply.** Verify signature, decrypt, check the item's version (Item history), merge into local SQLite. Store `last_rev`.
 3. **Push.** `POST /vaults/{id}/changes` with a batch of `{id, base_rev, deleted, envelope}`.
     - Server accepts an item if its current rev equals `base_rev`, or the item is new.
     - Otherwise it rejects that item with `conflict` in the per-item result and returns the current server copy.
@@ -184,7 +186,29 @@ Sync is a per-vault revision log. Pull is "give me everything after rev N". Push
 5. **Realtime nudge (optional).** `GET /vaults/{id}/events` via SSE sends only `{head_rev}`. Clients then pull. Self-hosters can skip this; clients fall back to polling: every 60 s while someone uses the app, every 5 minutes while nobody does (window hidden, or no input for 5 minutes), and at once on coming back. Local edits push within seconds either way.
 6. **Quiet rounds are cheap.** A round lists the account's organizations (`GET /orgs`) and vaults (`GET /vaults`). A vault whose `head_rev` there equals the device's `last_rev` isn't pulled. An organization whose `rev` (optional) equals the one the device saw last isn't fetched again: its details, members, device approvals and vault members are reused, and verified again locally (the device's own pins may have changed). So a quiet round is two requests, however many organizations and vaults there are.
 
-**Tombstones.** Deletes are items with `deleted: true` and an empty envelope. The server keeps them for at least 90 days. A client whose `last_rev` is older than the oldest retained tombstone gets `410 Gone` and does a full resync.
+**Tombstones.** Deletes are items with `deleted: true`. A client with item history sends the deletion's signed envelope along (at most 1 KiB, under any key generation of the vault); a server with `features.signed_tombstones` keeps it for an item it has and returns it with the tombstone, and others ignore it. The server keeps tombstones for at least 90 days. A client whose `last_rev` is older than the oldest retained tombstone gets `410 Gone` and does a full resync.
+
+**Item history.** The vault's revision only says how far a device has read. Each item also has a
+version inside its signed envelope, so a server can't serve a device a copy of an item older
+than one it has seen:
+
+- Every write carries `item_version` (Wire formats): an edit, a conflict copy, a re-seal under a
+  rotated key, a deletion. Versions grow along an item's history because a server takes a write
+  only on the item's latest revision (`base_rev`); the clock keeps them growing for an item made
+  again after its tombstone was purged.
+- A client remembers the version of the last copy of each item the server confirmed (pulled or
+  pushed). A signed copy with a lower version, item or deletion, is refused: the vault's sync
+  stops with an error, as for a vault revision below the one seen. An equal version is taken (the
+  same write again, or an older app's re-seal of it, which keeps the plaintext).
+- Apps from before item history (0.2.0) write items without `item_version` and delete without an
+  envelope, and ignore both in what they read. A client takes such a change, and the next
+  versioned copy starts the count again (its writer may not have seen the earlier ones). So the
+  guard holds once every app that writes to a vault has item history. Strict item history, a
+  client setting, refuses both kinds of change to an item that has a version; it is off while
+  such apps may still write.
+- Not covered: a client without a copy of an item has nothing to compare it with (a new device,
+  or one starting over after `410`), so a server can still serve it an old copy or leave an item
+  out. That needs signed checkpoints of a vault's state.
 
 **Blobs and session logs.** What is too big for an item goes in a blob
 (`/vaults/{id}/blobs/{hash}`, behind `features.blobs`): sealed under the vault key (Wire formats),
@@ -224,7 +248,10 @@ Login proves knowledge of `AuthKey` and returns short-lived tokens. The client n
 **Devices.** Each login registers a device (`name`, `platform`, public Ed25519 key). `GET /devices` lists them and `DELETE /devices/{id}` signs one out: its tokens stop working, and its next refresh gets `401 device_revoked` (servers keep answering that for the refresh token's lifetime), on which the app erases what it keeps (vaults, keys, settings, pinned host keys, its keychain entry) and returns to first run with a note saying why. Only that code erases. `401 account_deleted` (the account was deleted from another device or a website) turns sync off as *Disconnect → Keep a copy* does: the personal vault stays, now the only copy, and team vaults go. Every other 401 (an expired session, a reused refresh token, a password changed on another device) means "sign in again", and the data stays. A device that never connects again keeps what it has, encrypted under the master password, so the UI says signing out takes effect when the device next connects. A device's own *Disconnect* asks whether to erase it too or keep a copy that no longer syncs.
 
 **2FA.** TOTP on the account, checked at `/auth/login`; set up and turned off through
-`/account/totp…`, and turned off by recovery. WebAuthn isn't supported yet. Email-verified sign-up,
+`/account/totp…`, and turned off by recovery. An organization can require it
+(`policies.require_totp`): its vaults answer `403 totp_setup_required` (with `org_id`) to a member
+without it, and `GET /vaults` leaves them out, so the app checks the account when none of such an
+organization's vaults is listed. WebAuthn isn't supported yet. Email-verified sign-up,
 email changes and an account portal are optional features of the API spec
 ([`spec/openapi.yaml`](../spec/openapi.yaml)).
 
@@ -303,7 +330,7 @@ We publish `vault-sync/v1` as an OpenAPI 3.1 document plus a conformance test su
 | [`tools/vault-conform`](../tools/vault-conform) (runs against a URL) | Apache-2.0 OR MIT | Pass/fail per endpoint, with throwaway accounts: auth, devices, sync (conflicts, 410, pagination), sharing, blobs |
 | Reference server ([`server/`](../server), Rust + SQLite, single binary, Dockerfile) | AGPL-3.0 | So self-hosting is `docker run`, not "implement the spec" |
 
-**Capability discovery.** `GET /.well-known/vault-sync`, which needs no session (like the sign-up and sign-in steps), returns the spec version, limits, and optional features (`Capabilities` in the spec: `registration_open`, `terms`, `email_verification`, `sse`, `totp`, `blobs`, `sso`, `sharing`, `billing`). The client adapts its UI from that response; for example, it shows no plans when `billing` is absent.
+**Capability discovery.** `GET /.well-known/vault-sync`, which needs no session (like the sign-up and sign-in steps), returns the spec version, limits, and optional features (`Capabilities` in the spec: `registration_open`, `terms`, `email_verification`, `sse`, `totp`, `signed_tombstones`, `blobs`, `sso`, `sharing`, `billing`). The client adapts its UI from that response; for example, it shows no plans when `billing` is absent.
 
 **Versioning.** The path prefix is `/v1`. Additive changes are minor and must be ignored by older clients. Breaking changes go to `/v2`, and the client supports N and N-1.
 

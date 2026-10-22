@@ -38,7 +38,8 @@ pub struct ReachView {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SecretView {
-    /// `password` (a host's saved password), `key` (a shared SSH key) or `vpn`.
+    /// `password` (a host's saved password), `key` (a shared SSH key), `vpn`, or `feed` (a
+    /// feed's token, to rotate where the feed is published).
     kind: &'static str,
     item_id: String,
     label: String,
@@ -154,6 +155,16 @@ pub async fn offboard_summary(
                         kind: "vpn",
                         item_id: item.id.clone(),
                         label: p.label.clone(),
+                        vault_name: name.clone(),
+                        used_by: Vec::new(),
+                    });
+                }
+                ItemData::CloudSource(c) if c.token.is_some() => {
+                    r.other += 1;
+                    secrets.push(SecretView {
+                        kind: "feed",
+                        item_id: item.id.clone(),
+                        label: c.label.clone(),
                         vault_name: name.clone(),
                         used_by: Vec::new(),
                     });

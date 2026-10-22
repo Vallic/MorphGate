@@ -198,6 +198,16 @@ fn relink(
             auth: auth(i.auth)?,
             ..i
         }),
+        // Kept by its feed where that goes too; else an ordinary snippet there.
+        ItemData::Snippet(sn) => ItemData::Snippet(crate::Snippet {
+            source: sn.source.and_then(|src| {
+                map.get(&src.source_ref).map(|to| crate::SnippetSource {
+                    source_ref: to.clone(),
+                    ..src
+                })
+            }),
+            ..sn
+        }),
         ItemData::HostGroup(g) => ItemData::HostGroup(crate::HostGroup {
             identity_ref: optional(g.identity_ref)?,
             jump_ref: optional(g.jump_ref)?,
@@ -311,11 +321,7 @@ impl LocalVault {
         let done = (|| -> Result<Moved> {
             let stamp = now();
             for p in going.iter().filter(|p| p.carry == Carry::Move) {
-                self.conn.execute(
-                    "UPDATE items SET envelope = NULL, deleted = 1, dirty = 1, updated_at = ?3
-                     WHERE vault_id = ?1 AND id = ?2",
-                    rusqlite::params![from, p.id, stamp],
-                )?;
+                self.tombstone(&from, &p.id, stamp)?;
             }
             let mut forget = Vec::new();
             for (id, data, old_blob) in &mut writes {

@@ -53,6 +53,30 @@ pub struct Hop {
     /// TCP connection. `%h`, `%p` and `%r` are this hop's host, port and user. For bastions that
     /// refuse forwarding but hand a session on (`nc %h %p`, Vallic's `<env> jump <machine>`).
     pub via_command: Option<String>,
+    /// The host keys whoever described this host lists for it (a feed): the server must
+    /// present one of them, and is trusted without asking.
+    pub listed_keys: Option<ListedKeys>,
+}
+
+/// Host keys a server is known to have, from where its host came from.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ListedKeys {
+    /// OpenSSH public keys, `ssh-ed25519 AAAA…`.
+    pub keys: Vec<String>,
+    /// Who lists them, for messages (the feed's name).
+    pub from: String,
+}
+
+/// [`ListedKeys`], read: `None` when none of them is a key (then the host is asked about as
+/// any other).
+fn listed(keys: Option<ListedKeys>) -> Option<(Vec<PublicKey>, String)> {
+    let l = keys?;
+    let parsed: Vec<PublicKey> = l
+        .keys
+        .iter()
+        .filter_map(|k| PublicKey::from_openssh(k.trim()).ok())
+        .collect();
+    (!parsed.is_empty()).then_some((parsed, l.from))
 }
 
 /// Asks the user whether to trust a host key seen for the first time.
@@ -273,6 +297,7 @@ async fn connect_hop(
     let verifier = Verifier {
         host: hop.host.clone(),
         port: hop.port,
+        listed: listed(hop.listed_keys.clone()),
         known_hosts: known_hosts.clone(),
         prompt: prompt.clone(),
         rejected: rejected.clone(),
@@ -550,6 +575,8 @@ async fn agent(
 pub(crate) struct Verifier {
     host: String,
     port: u16,
+    /// The keys listed for this host, and by whom: they decide instead of known_hosts.
+    listed: Option<(Vec<PublicKey>, String)>,
     known_hosts: Arc<KnownHosts>,
     prompt: Arc<dyn HostKeyPrompt>,
     /// Why the key was refused, surfaced after `connect` fails.
@@ -610,6 +637,29 @@ impl client::Handler for Verifier {
             }
         };
         let mut info = HostKeyInfo::new(&self.host, self.port, &key);
+        // Listed for the host (its feed): one of those, or refused. A revoked key still isn't.
+        if let Some((keys, from)) = &self.listed {
+            if let Some(revoked) = self
+                .known_hosts
+                .revoked(&self.host, self.port, key.key_data())
+            {
+                return Ok(self.reject(Error::HostKeyRevoked {
+                    host: self.host.clone(),
+                    port: self.port,
+                    fingerprint: info.fingerprint.clone(),
+                    from: revoked,
+                }));
+            }
+            if keys.iter().any(|k| k.key_data() == key.key_data()) {
+                return Ok(true);
+            }
+            return Ok(self.reject(Error::HostKeyNotListed {
+                host: self.host.clone(),
+                port: self.port,
+                fingerprint: info.fingerprint.clone(),
+                from: from.clone(),
+            }));
+        }
         match self.known_hosts.check(&self.host, self.port, &key)? {
             HostKeyCheck::Trusted => Ok(true),
             HostKeyCheck::Revoked { from } => Ok(self.reject(Error::HostKeyRevoked {

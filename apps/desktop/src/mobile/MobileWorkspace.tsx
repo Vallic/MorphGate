@@ -4,6 +4,7 @@ import {
   describeForward,
   hosts as hostsApi,
   keyType,
+  totpTitle,
   vpnKindName,
   type ConnectTarget,
   type ForwardView,
@@ -79,11 +80,14 @@ interface Props {
   onToggleForward: (f: ForwardView) => void;
   onOpenMore: (panel: MorePanel) => void;
   onLock: () => void;
+  /** Turn on two-step verification: organizations' vaults wait for it. */
+  onTotp: () => void;
   /** Sign in at an organization's identity provider. */
   onSso: (need: SsoNeed) => void;
   /** An organization's vaults wait for this device's approval. */
   onApproval: (need: ApprovalNeed) => void;
-  onSend: (key: number, body: string, run: boolean) => void;
+  /** Text into a session; `snippet` where it's one (a feed's may ask first). */
+  onSend: (key: number, body: string, run: boolean, snippet?: SnippetView) => void;
   onKey: (key: number, k: ExtraKey) => void;
   /** Latches Ctrl for the next key typed in the session; `used` is called when it applies. */
   onCtrl: (key: number, on: boolean, used: () => void) => void;
@@ -225,6 +229,17 @@ function Home(p: Props & { section: Section; onSection: (s: Section) => void; on
       <div className="m-scroll">
         {p.section === "hosts" && (
           <>
+            {!!p.syncStatus?.totpRequired.length && (
+              <button type="button" className="m-sso" onClick={p.onTotp}>
+                <span className="m-row-text">
+                  <span className="m-row-title">Turn on two-step verification</span>
+                  <span className="m-row-sub">{totpTitle(p.syncStatus.totpRequired)}.</span>
+                </span>
+                <span className="m-chevron">
+                  <Svg d={CHEVRON} size={18} />
+                </span>
+              </button>
+            )}
             {p.syncStatus?.ssoRequired.map((n) => (
               <button key={n.orgId} type="button" className="m-sso" onClick={() => p.onSso(n)}>
                 <span className="m-row-text">
@@ -739,14 +754,14 @@ function TerminalBar(p: Props & { tab: MobileTab }) {
                   type="button"
                   className="m-row-main"
                   disabled={p.tab.status !== "connected"}
-                  onClick={() => (close(), p.onSend(p.tab.key, s.body, false))}
+                  onClick={() => (close(), p.onSend(p.tab.key, s.body, false, s))}
                 >
                   <span className="m-row-text">
                     <span className="m-row-title">{s.name}</span>
                     <span className="m-row-sub mono">{s.body.split("\n")[0]}</span>
                   </span>
                 </button>
-                <button type="button" className="m-button small" disabled={p.tab.status !== "connected"} onClick={() => (close(), p.onSend(p.tab.key, s.body, true))}>
+                <button type="button" className="m-button small" disabled={p.tab.status !== "connected"} onClick={() => (close(), p.onSend(p.tab.key, s.body, true, s))}>
                   Run
                 </button>
               </li>

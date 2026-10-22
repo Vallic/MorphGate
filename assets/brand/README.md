@@ -12,6 +12,7 @@ the wordmark in a live font.
 | `morphgate-android-foreground.svg`, `-background.svg`, `-monochrome.svg` | Android's adaptive icon layers: the mark alone, scaled to stay inside the circle launchers cut, on the tile's colour; one-colour for themed icons. |
 | `morphgate-lockup-on-dark.svg` | On dark grounds (Console, terminal backgrounds). |
 | `morphgate-lockup-on-light.svg` | On light grounds (Greenbar, paper). |
+| `morphgate-social-preview.png` | The repository's social preview on GitHub (Settings → General → Social preview), 1280 × 640: the lockup on the dark ground, the tagline, the platforms. |
 
 The phone icons come from `icon-manifest.json` (Android) and the iOS tile, and go to both
 `src-tauri/icons` and the generated projects (`gen/android`, `gen/apple`), which `tauri icon`

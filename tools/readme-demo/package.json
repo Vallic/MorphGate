@@ -1,0 +1,10 @@
+{
+  "name": "morphgate-readme-demo",
+  "private": true,
+  "description": "Draws the README's demo: MorphGate's Hosts page and a recorded session, as an animated SVG",
+  "type": "module",
+  "license": "MPL-2.0",
+  "dependencies": {
+    "@xterm/headless": "6.0.0"
+  }
+}

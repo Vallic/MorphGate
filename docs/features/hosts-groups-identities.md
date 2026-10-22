@@ -18,7 +18,7 @@ An item is an `ItemData` serialized as JSON with a `type` tag (`{"type": "host",
 | `vpn` | A VPN profile a host can go through | [VPN](vpn.md) |
 | `terminal_theme` | Terminal colors | [Appearance](appearance.md) |
 | `session_log` | A recorded session (blobs) | [Session logs](session-logs.md) |
-| `cloud_source` | Hosts kept in step with a cloud | [Cloud sources](cloud-sources.md) |
+| `cloud_source` | Hosts kept in step with a cloud or a feed | [Cloud sources](cloud-sources.md) |
 | `member_key` | A member's published SSH public key; only in an organization's directory vault | [Teams](teams.md) |
 | unknown | A kind a newer app wrote: kept and synced, left out of lists, never edited or moved | |
 
@@ -106,19 +106,27 @@ An `attachment` is `name` (as added, without a path), `host_ref`, `blob` (hex SH
 
 The sidebar (`Sidebar.tsx`) is for connecting; the pages (`Lists.tsx`) are for managing.
 
+Every list page is a table (`Table`, `TRow`, `NameCell`): a row per item, its name first, which is the row's main action (connect a host, open anything else), then the columns people scan, then the row's other actions, shown on hover or keyboard focus (always on touch screens). Every other row carries the greenbar band. A page has one primary button; Close is a quiet × at the top right. A toolbar holds the search, filters (a page's most used tags, "Connected" or "Running") and **Select**. Below 640 px of page width the rows stack and their actions stay shown.
+
+On desktop, once the vault has hosts, the Hosts page is home: the workspace opens on it after unlocking, and closing the last tab or page returns to it (`home()` in `App.tsx`). With no hosts, home is quick connect. Closing the Hosts page itself goes to quick connect. On phones the start screen is the host list either way.
+
 | Sidebar part | What it does |
 | --- | --- |
 | Navigation | **Hosts**, **Groups**, **Keys** (keys and identities counted together), **Snippets**, **Tunnels** ("2 on"), **VPNs** ("1 up"), and **Session logs** once a host records |
 | Search | "Search hosts": label, hostname, user, tags |
+| Open | Hosts with a session, while any have one; a click goes to the host's latest tab |
 | Hosts | The plus (**New host**) and the group icon (**New group**); "Add your first host" when empty; hosts without a group, then each group, folding (remembered in `localStorage` as `morphgate.collapsed-groups`), with **Open the group** |
-| A host row | Click connects; `user@host:port`, "via" the jump host, a VPN mark, "gone" for a host its cloud no longer lists, the shared vault's name; **Browse files (SFTP)** (hidden when its cloud offers no SFTP) and **Edit host** |
+| A host row | A status square (connected, connecting, not connected) instead of a letter; click connects; `user@host:port`, "via" the jump host, a VPN mark, "gone" for a host its cloud no longer lists, the shared vault's name; **Browse files (SFTP)** (hidden when its cloud offers no SFTP) and **Edit host** |
 
 | Page | Content |
 | --- | --- |
-| Hosts | **Import…** and **Clouds…** (desktop), **Select**, **New group**, **New host**; "Not in a group", then a section per group with **Edit group** and what its hosts use; rows with **Connect**, **Files**, **Edit**, tags, and badges "gone from AWS" or the machine's state ("stopped") |
-| Groups | Each group with its host count and defaults; **Open**, **Edit** |
-| A group | Its hosts, the tunnels through them, their files (**Save**), and "What its hosts use" (identities, keys, jump hosts, VPNs); **Move to…**, **Edit group** |
-| Keys | Keys, then **Identities** (**New identity**) and **Host CAs** |
+| Hosts | **Add from…** (desktop: **Import…**, **Clouds…**), **Quick connect** (desktop: opens quick connect, where the sign-in is chosen), **New group**, **New host**. Columns: Host (status square, name, `user@host:port`, the shared vault, "gone from AWS" or the machine's state), Route (direct, via a jump host, through a cloud or a proxy command, and the VPN, mint while up), Signs in with (identity, key, agent or password; "keeps its session", "recorded") and Tags (two, then "+N"). "Not in a group", then a section per group whose header names it (it opens the group's page), counts its hosts and shows what it gives them, with **Edit group**; a group's hosts sit indented under it, a rule down from its icon as in the sidebar. Row actions: **Connect** (**New tab** for a host with a session, whose name goes to that session), **Browse files (SFTP)**, **Edit** |
+| Groups | Group, Hosts, What its hosts get, Connected; the name opens the group's page, **Edit** on the row |
+| A group | "What its hosts use" as cards (identities, keys, jump hosts, VPNs; each opens), then its hosts as on the Hosts page, the tunnels through them, their files (**Save**); **Move to…**, **Edit group** |
+| Keys | Tabs **Keys**, **Identities**, **Host CAs** with their counts; the page's primary button follows the tab (**New key**, **New identity**, **New host CA**). Keys: fingerprint, Used by, Certificate ("None", "Valid 30 d", "Expires in 3 d" under a week, "Expired", "No expiry", "Can't be read") |
+| Snippets | **Import…**, **New snippet**; Snippet, Command (its first line, "N lines"), Tags; **Paste** and **Run** while a terminal is connected, **Edit** |
+| Tunnels | The switch first, then Tunnel, Forwards, Through (with the host's status), State ("Running · N open", "Stopped", "Starting…"); **Edit** |
+| VPNs | VPN (its kind), Server, Used by, State ("Up", "Down", "Problem", with the problem under the name); **Edit** |
 
 ## Bulk changes
 

@@ -6,11 +6,17 @@ name: CI
 # macOS and Windows builds, the slow ones, only run for pull requests into main and manual runs.
 # The branch rules require these checks by name: "Lint, test, live SSH and VPN", "End to end
 # (Linux)", "Android build", "Desktop" and "Signed off"; renaming a job means changing the
-# rules too.
+# rules too. "Android monkey" isn't required: a random walk can find a bug the pull request
+# didn't make.
 on:
   pull_request:
     branches: [develop, main]
   workflow_dispatch:
+    inputs:
+      monkey_seed:
+        description: "Android monkey: the seed to repeat (empty for a random one)"
+        required: false
+        default: ""
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -303,3 +309,86 @@ jobs:
           version=$(sed -n 's/^version = "\(.*\)"/\1/p' ../../Cargo.toml | head -1)
           npx tauri android build --apk --target aarch64 --config "{\"version\":\"$version\"}"
 
+  # Android's monkey on the app in an emulator, kept basic: 3 rounds of 500 random touches,
+  # swipes, turns and keys, each from a fresh start, over a vault with hosts, keys and a snippet. A
+  # crash, a Rust panic, an error the page throws or an app that stops drawing fails it. The
+  # emulator draws in software, a frame taking seconds, so ANRs are noted rather than failing it,
+  # and the screen is smaller (720 × 1600, as wide in dp as a Pixel 6). The seed is in the log (Run
+  # workflow takes one to repeat). A debug build, whose WebView can be driven:
+  # apps/desktop/e2e/README.md.
+  android-monkey:
+    name: Android monkey
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: C compiler
+        run: .github/scripts/need-packages.sh build-essential pkg-config unzip
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-linux-android
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+
+      - name: Android NDK
+        run: echo "NDK_HOME=$ANDROID_NDK_LATEST_HOME" >>"$GITHUB_ENV"
+
+      # For the emulator's processor. Line numbers are all a panic needs from debug info, and
+      # keep the APK small enough to install.
+      - name: Build
+        working-directory: apps/desktop
+        env:
+          CARGO_PROFILE_DEV_DEBUG: line-tables-only
+        run: |
+          npm ci
+          npx tauri android build --debug --apk --target x86_64
+
+      - name: KVM for the emulator
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Run
+        uses: reactivecircus/android-emulator-runner@v2
+        env:
+          MONKEY_SEED: ${{ inputs.monkey_seed }}
+          MONKEY_ROUNDS: 3
+          MONKEY_EVENTS: 500
+          MONKEY_ANR: note
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          cores: 4
+          ram-size: 4096M
+          disk-size: 6000M
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
+          script: |
+            "$ANDROID_HOME/platform-tools/adb" shell wm size 720x1600
+            "$ANDROID_HOME/platform-tools/adb" shell wm density 280
+            ADB="$ANDROID_HOME/platform-tools/adb" node apps/desktop/e2e/android-monkey.mjs apps/desktop/src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk target/e2e/android-monkey
+
+      - name: Screenshots and logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: android-monkey
+          path: target/e2e/android-monkey
+          retention-days: 7
+          if-no-files-found: ignore

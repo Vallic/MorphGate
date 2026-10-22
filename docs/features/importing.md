@@ -4,7 +4,7 @@ People arrive with hosts in another SSH client. The desktop app reads four sourc
 
 ## The page
 
-The Hosts page's **Import…** (desktop only) opens "Import hosts", which reads `~/.ssh/config` straight away.
+The Hosts page's **Add from…** → **Import…** (desktop only) opens "Import hosts", which reads `~/.ssh/config` straight away.
 
 | Control | Does |
 | --- | --- |

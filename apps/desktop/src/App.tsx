@@ -10,6 +10,7 @@ import {
   hostCas as hostCasApi,
   keys as keysApi,
   snippets as snippetsApi,
+  cloud as cloudApi,
   forwards as forwardsApi,
   device as deviceApi,
   sync as syncApi,
@@ -43,6 +44,7 @@ import {
   type TerminalSettings,
   type VaultTheme,
   type SecurityKeyTouch,
+  type Link,
   type ReceivedLink,
 } from "./api";
 import { AppearancePanel } from "./AppearancePanel";
@@ -53,6 +55,7 @@ import { HostEditor } from "./HostEditor";
 import { GroupEditor, IdentityEditor } from "./Identities";
 import { HostCaPanel } from "./HostCaPanel";
 import { HostKeyChangedDialog, HostKeyDialog } from "./HostKeyDialog";
+import { SnippetCheckDialog } from "./SnippetCheck";
 import { RouteBar } from "./RouteBar";
 import { addPane, dividers, holds, moveDivider, panes, rects, removePane, type Divider, type Rect, type Split } from "./splits";
 import { SessionLogsPanel } from "./SessionLogs";
@@ -66,11 +69,11 @@ import { PasswordDialog } from "./PasswordDialog";
 import { CloudPage } from "./CloudPage";
 import { ImportHostsPage } from "./ImportHosts";
 import { ImportSnippetsPage } from "./ImportSnippets";
-import { GroupPage, GroupsPage, HostsPage, KeysPage, SnippetsPage, TunnelsPage, VpnsPage } from "./Lists";
+import { GroupPage, GroupsPage, HostsPage, KeysPage, SnippetsPage, TunnelsPage, VpnsPage, type KeysTab } from "./Lists";
 import { MoveContext } from "./Move";
 import { Sidebar, type LiveState, type PageKind } from "./Sidebar";
 import { SnippetPanel } from "./SnippetPanel";
-import { SyncOffer, SyncPanel } from "./SyncPanel";
+import { SyncOffer, syncOfferTime, SyncPanel } from "./SyncPanel";
 import { VpnPanel } from "./VpnPanel";
 import { SecurityPanel } from "./SecurityPanel";
 import { TeamsPanel } from "./TeamsPanel";
@@ -93,8 +96,6 @@ export function App() {
   const loadTermSettings = useCallback(() => void appearanceApi.settings().then(setTermSettings, () => {}), []);
   useEffect(loadTermSettings, [loadTermSettings]);
   const appTheme = useAppTheme(termSettings?.appTheme ?? "dark");
-  // A vault created just now (not joined through sync): offer sync once.
-  const [created, setCreated] = useState(false);
 
   useEffect(() => {
     vault.status().then(setStatus, (e) => setFatal(errorText(e)));
@@ -102,13 +103,13 @@ export function App() {
   // Signed out by its sync account, or disconnected and cleared: back to the start, saying why.
   const [erased, setErased] = useState<Erased | null>(null);
   useEffect(() => {
-    const off = listen<Erased>("device-erased", (e) => (setErased(e.payload), setCreated(false), setStatus("uninitialized"), loadTermSettings()));
+    const off = listen<Erased>("device-erased", (e) => (setErased(e.payload), setStatus("uninitialized"), loadTermSettings()));
     return () => void off.then((f) => f());
   }, [loadTermSettings]);
 
   if (fatal) return <div className="gate"><p className="error">{fatal}</p></div>;
   if (status === null) return <div className="gate" />;
-  if (status === "uninitialized") return <SetupScreen erased={erased} onDone={(fresh) => (setErased(null), setCreated(fresh), setStatus("unlocked"))} />;
+  if (status === "uninitialized") return <SetupScreen erased={erased} onDone={(fresh) => (setErased(null), fresh ? syncOfferTime.schedule() : syncOfferTime.forget(), setStatus("unlocked"))} />;
   if (status === "locked") return <UnlockScreen onUnlocked={() => setStatus("unlocked")} />;
   return (
     <Workspace
@@ -116,7 +117,6 @@ export function App() {
       termSettings={termSettings}
       onSettingsChanged={loadTermSettings}
       appTheme={appTheme}
-      offerSync={created}
     />
   );
 }
@@ -154,7 +154,8 @@ type View =
   | { kind: "key"; id?: string }
   | { kind: "snippet"; id?: string }
   | { kind: "forward"; id?: string }
-  | { kind: "sync" }
+  /** `totp`: straight to turning on two-step verification (teams wait for it). */
+  | { kind: "sync"; totp?: boolean }
   | { kind: "security" }
   | { kind: "about" }
   | { kind: "teams" }
@@ -167,17 +168,22 @@ type View =
   /** Hosts from OpenSSH's configuration. */
   | { kind: "importHosts" }
   | { kind: "importSnippets" }
-  | { kind: "cloud" }
+  | { kind: "cloud"; add?: "feed" }
   | { kind: "groups" }
   /** One group and everything in it. */
   | { kind: "groupPage"; id: string }
-  | { kind: "keys" }
+  /** `tab`: Keys (the default), Identities or Host CAs. */
+  | { kind: "keys"; tab?: KeysTab }
   | { kind: "snippets" }
   | { kind: "forwards" }
   | { kind: "vpns" };
 
 /** Views that fill the workspace: with no session open, the tab bar makes room for them too. */
 const PAGES = new Set<View["kind"]>(["hosts", "importHosts", "importSnippets", "cloud", "groups", "groupPage", "keys", "snippets", "forwards", "vpns", "logs", "teams", "sync"]);
+
+/** Pages opened from another page (Import from Snippets, a group from Groups): closing one
+ * returns to that page, where a page opened from the sidebar replaces the one shown. */
+const SUBPAGES = new Set<View["kind"]>(["importHosts", "importSnippets", "cloud", "groupPage", "logs"]);
 
 /** Editors: opening one from another keeps the first one's way back. */
 const EDITORS = new Set<View["kind"]>(["host", "identity", "group", "key", "snippet", "forward", "vpn", "hostCa"]);
@@ -240,11 +246,9 @@ interface WorkspaceProps {
   onSettingsChanged: () => void;
   /** The app theme in effect. */
   appTheme: "dark" | "light";
-  /** The vault was just created: offer to turn sync on. */
-  offerSync: boolean;
 }
 
-function Workspace({ onLock, termSettings, onSettingsChanged: loadTermSettings, appTheme, offerSync }: WorkspaceProps) {
+function Workspace({ onLock, termSettings, onSettingsChanged: loadTermSettings, appTheme }: WorkspaceProps) {
   const [hostList, setHosts] = useState<HostView[]>([]);
   const [identityList, setIdentities] = useState<IdentityView[]>([]);
   const [hostCaList, setHostCas] = useState<HostCaView[]>([]);
@@ -285,8 +289,9 @@ function Workspace({ onLock, termSettings, onSettingsChanged: loadTermSettings, 
         return open({ kind: "teams" });
       case "invite":
         if (!syncStatus?.enabled || syncStatus.signedOut) {
+          setWaitingInvite(link);
           setNotice(
-            `This is an invite to a team${link.server ? ` on ${new URL(link.server).host}` : ""}. Turn on sync with the invited address first, then open the link again.`,
+            `This is an invite to a team${link.server ? ` on ${new URL(link.server).host}` : ""}. Turn on sync with the invited address: Teams opens with the invite once it's on.`,
           );
           return open({ kind: "sync" });
         }
@@ -300,13 +305,24 @@ function Workspace({ onLock, termSettings, onSettingsChanged: loadTermSettings, 
         return open({ kind: mobile ? "connect" : "quick" });
     }
   };
+  const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
+  // Links are taken once sync's state is known: an invite needs it.
+  const statusKnown = syncStatus !== null;
   useEffect(() => {
+    if (!statusKnown) return;
     const take = () => void linksApi.take().then((all) => all.forEach((r) => openLink.current(r)), () => {});
     take();
     const unlisten = listen("links-pending", take);
     return () => void unlisten.then((f) => f());
-  }, []);
-  const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
+  }, [statusKnown]);
+  // An invite that came while sync was off: Teams opens with it once sync is on.
+  const [waitingInvite, setWaitingInvite] = useState<Link | null>(null);
+  useEffect(() => {
+    if (!waitingInvite || !syncStatus?.enabled || syncStatus.signedOut) return;
+    setWaitingInvite(null);
+    setNotice("");
+    openLink.current({ link: waitingInvite, error: null });
+  }, [waitingInvite, syncStatus?.enabled, syncStatus?.signedOut]);
 
   useEffect(() => {
     if (orgList.length === 0) return setLockedOrgs(new Set());
@@ -331,21 +347,26 @@ function Workspace({ onLock, termSettings, onSettingsChanged: loadTermSettings, 
     if (tabs.length === 0) setMobile(onPhone || narrow);
   }, [narrow, tabs.length]);
   const [view, setView] = useState<View>({ kind: "quick" });
+  // Home, where the workspace opens and where closing the last page or tab lands: the hosts once
+  // there are any (on a phone, "quick" is the host list already), else quick connect.
+  const home = (): View => (!mobile && hostList.length > 0 ? { kind: "hosts" } : { kind: "quick" });
   // The way back: closing a view returns to the page, editor or session it was opened from.
   const [trail, setTrail] = useState<View[]>([]);
   const open = (v: View) => {
     if (v.kind === "tab" || v.kind === "quick") setTrail([]);
     else {
       // An editor replaces an editor, a page a page: what was under the first stays the way back.
+      // A page's own pages (its import, a group) keep it as the way back.
       const editor = (k: View["kind"]) => EDITORS.has(k);
       const from = view.kind === "tab" || view.kind === "quick" ? null : editor(view.kind);
-      if (view.kind !== "quick" && from !== editor(v.kind)) setTrail((t) => [...t, view].slice(-8));
+      if (view.kind !== "quick" && (from !== editor(v.kind) || SUBPAGES.has(v.kind))) setTrail((t) => [...t, view].slice(-8));
     }
     setView(v);
   };
   const close = () => {
     const rest = [...trail];
-    let next: View = { kind: "quick" };
+    // Closing home itself goes to quick connect.
+    let next: View = view.kind === "hosts" ? { kind: "quick" } : home();
     while (rest.length) {
       const v = rest.pop()!;
       if (v.kind !== "tab" || tabs.some((t) => t.key === v.key)) {
@@ -361,11 +382,18 @@ function Workspace({ onLock, termSettings, onSettingsChanged: loadTermSettings, 
   useEffect(() => {
     if (linked && !["teams", "quick", "connect"].includes(view.kind)) setLinked(null);
   }, [view.kind]);
-  const [offering, setOffering] = useState(offerSync);
+  // A week after a vault was created without sync, sync is offered (once).
+  const [offering, setOffering] = useState(syncOfferTime.due);
+  // Sync turned on another way (Sync in the sidebar, an invite): no offer any more.
+  useEffect(() => {
+    if (syncStatus?.enabled) syncOfferTime.forget();
+  }, [syncStatus?.enabled]);
   const [prompts, setPrompts] = useState<HostKeyPrompt[]>([]);
   // A security key waiting for a touch to sign in.
   const [touch, setTouch] = useState<SecurityKeyTouch | null>(null);
   const [changedKeys, setChangedKeys] = useState<ChangedHostKey[]>([]);
+  // A feed's snippet that changed since this device last sent it, waiting for a yes.
+  const [checking, setChecking] = useState<{ snippet: SnippetView; run: boolean; go: () => void } | null>(null);
   const [vpnPrompts, setVpnPrompts] = useState<VpnPrompt[]>([]);
   const [autoLock, setAutoLock] = useState(0);
   useIdleLock(autoLock, onLock);
@@ -409,6 +437,32 @@ function Workspace({ onLock, termSettings, onSettingsChanged: loadTermSettings, 
     }
   }, []);
 
+  // Feeds refresh themselves on desktops: once the first sync since unlocking has brought what
+  // other devices refreshed (at once without sync; after 20 s at the latest), then every 15
+  // minutes. The backend skips a feed refreshed on any device in the last 10.
+  const feedsRan = useRef(false);
+  const feedsSyncAt = useRef<number | null | undefined>(undefined);
+  const refreshFeeds = useCallback(() => {
+    feedsRan.current = true;
+    // What it changed shows at once (the lists otherwise follow only a sync).
+    void cloudApi.autoRefresh().then((n) => n > 0 && void refresh(), () => {});
+  }, [refresh]);
+  useEffect(() => {
+    if (mobileOs) return;
+    const first = window.setTimeout(() => feedsRan.current || refreshFeeds(), 20_000);
+    const every = window.setInterval(refreshFeeds, 15 * 60_000);
+    return () => (window.clearTimeout(first), window.clearInterval(every));
+  }, [refreshFeeds]);
+  useEffect(() => {
+    if (mobileOs || feedsRan.current || !syncStatus) return;
+    const syncing = syncStatus.enabled && !syncStatus.signedOut;
+    if (feedsSyncAt.current === undefined) {
+      feedsSyncAt.current = syncStatus.lastSyncAt;
+      if (syncing) return;
+    }
+    if (!syncing || (!syncStatus.syncing && syncStatus.lastSyncAt !== feedsSyncAt.current)) refreshFeeds();
+  }, [syncStatus, refreshFeeds]);
+
   // After a move, the editor in front shows the item where it went (a copy has a new id).
   const moves = useMemo(
     () => ({
@@ -421,9 +475,15 @@ function Workspace({ onLock, termSettings, onSettingsChanged: loadTermSettings, 
     [vaults, refresh],
   );
 
+  const [loaded, setLoaded] = useState(false);
   useEffect(() => {
-    void refresh();
+    void refresh().then(() => setLoaded(true));
   }, [refresh]);
+  // Opened (unlocked) with hosts: home is the hosts, unless a link filled in quick connect meanwhile.
+  // The view as it is now: a page opened in the moment before this runs stays open.
+  useEffect(() => {
+    if (loaded && !linked?.connect) setView((v) => (v.kind === "quick" ? home() : v));
+  }, [loaded]);
 
   useEffect(() => {
     if (view.kind === "tab" && tabs.find((t) => t.key === view.key)?.kind === "terminal") setLastTerminal(view.key);
@@ -509,6 +569,12 @@ function Workspace({ onLock, termSettings, onSettingsChanged: loadTermSettings, 
     }
     openTab({ kind: "saved", hostId: h.id, password, tmux }, h.label, kind, place);
   };
+  // A host's session: its latest tab (or a new one, if it closed meanwhile).
+  const showSession = (h: HostView) => {
+    const t = [...tabs].reverse().find((x) => x.target.kind === "saved" && x.target.hostId === h.id);
+    if (t) open({ kind: "tab", key: t.key });
+    else connectHost(h);
+  };
 
   const busy = (id: string, on: boolean) =>
     setPending((p) => {
@@ -563,7 +629,7 @@ function Workspace({ onLock, termSettings, onSettingsChanged: loadTermSettings, 
       // The next pane of the same split, else the last tab.
       const sibling = splitOf(view.key) && panes(splitOf(view.key)!.layout).find((k) => !keys.includes(k));
       const next = sibling ?? rest.at(-1)?.key;
-      setView(next !== undefined ? { kind: "tab", key: next } : { kind: "quick" });
+      setView(next !== undefined ? { kind: "tab", key: next } : home());
     }
   };
   const closeTab = (key: number) => closeTabs([key]);
@@ -640,7 +706,20 @@ function Workspace({ onLock, termSettings, onSettingsChanged: loadTermSettings, 
     if (view.kind !== "tab" || view.key !== key) open({ kind: "tab", key });
   };
 
-  const sendSnippet = (body: string, run: boolean) => sendTarget && sendTo(sendTarget.key, body, run);
+  /** What this device sent of a feed's snippet: a later change of it asks first. */
+  const markSent = (id: string) =>
+    void snippetsApi.sent(id).then(
+      () => setSnippets((all) => all.map((x) => (x.id === id ? { ...x, changed: false } : x))),
+      () => {},
+    );
+  /** Sends a snippet (`go`), asking first where its feed changed it since this device last did. */
+  const guardSnippet = (snippet: SnippetView | undefined, run: boolean, go: () => void) => {
+    if (snippet?.source && snippet.changed) return setChecking({ snippet, run, go });
+    go();
+    if (snippet?.source) markSent(snippet.id);
+  };
+  const sendSnippet = (body: string, run: boolean, snippet?: SnippetView) =>
+    sendTarget && guardSnippet(snippet, run, () => sendTo(sendTarget.key, body, run));
 
   const hostOf = (t: Tab) => (t.target.kind === "saved" ? hostList.find((h) => h.id === (t.target as { hostId: string }).hostId) : undefined);
   const current = tabs.find((t) => t.key === activeTab);
@@ -823,7 +902,7 @@ function Workspace({ onLock, termSettings, onSettingsChanged: loadTermSettings, 
         />
       )}
       {view.kind === "logs" && (
-        <SessionLogsPanel key={view.hostId ?? "all"} hostId={view.hostId} hosts={hostList} look={deviceLook} onClose={close} />
+        <SessionLogsPanel key={view.hostId ?? "all"} hostId={view.hostId} hosts={hostList} groups={groupList} vaults={vaults} look={deviceLook} onClose={close} />
       )}
       {view.kind === "teams" && (
         <TeamsPanel
@@ -831,15 +910,20 @@ function Workspace({ onLock, termSettings, onSettingsChanged: loadTermSettings, 
           vaults={vaults}
           orgs={orgList}
           keys={keyList}
+          syncStatus={syncStatus}
           onChanged={refresh}
           onClose={close}
           onSso={(orgId, orgName) => setSsoFor({ orgId, orgName })}
+          totpRequired={syncStatus?.totpRequired.map((o) => o.orgId) ?? []}
+          onTotp={() => open({ kind: "sync", totp: true })}
           invite={linked?.invite}
           openOrg={linked?.org}
         />
       )}
       {view.kind === "sync" && syncStatus && (
         <SyncPanel
+          key={view.totp ? "totp" : "sync"}
+          startTotp={view.totp}
           status={syncStatus}
           orgs={orgList}
           onChanged={() => void syncApi.status().then(setSyncStatus).then(refresh)}
@@ -885,17 +969,21 @@ function Workspace({ onLock, termSettings, onSettingsChanged: loadTermSettings, 
           vaults={vaults}
           live={live}
           onConnect={(h) => connectHost(h)}
+          onShowSession={showSession}
           onFiles={(h) => connectHost(h, undefined, "sftp")}
           onEdit={(id) => open({ kind: "host", id })}
           onEditGroup={(id) => open({ kind: "group", id })}
           onOpenGroup={(id) => open({ kind: "groupPage", id })}
           onImport={() => open({ kind: "importHosts" })}
-          onCloud={() => open({ kind: "cloud" })}
+          onCloud={(add) => open({ kind: "cloud", add })}
+          onQuickConnect={mobile ? undefined : () => open({ kind: "quick" })}
           onClose={close}
         />
       )}
       {view.kind === "importHosts" && <ImportHostsPage vaults={vaults} onImported={() => void refresh()} onClose={close} />}
-      {view.kind === "cloud" && <CloudPage vaults={vaults} keys={keyList} hosts={hostList} onChanged={() => void refresh()} onClose={close} />}
+      {view.kind === "cloud" && (
+        <CloudPage key={view.add ?? "clouds"} vaults={vaults} keys={keyList} hosts={hostList} adding={view.add} onChanged={() => void refresh()} onClose={close} />
+      )}
       {(view.kind === "groups" || (view.kind === "groupPage" && !groupList.some((g) => g.id === view.id))) && (
         <GroupsPage onChanged={() => void refresh()}
           groups={groupList}
@@ -904,6 +992,7 @@ function Workspace({ onLock, termSettings, onSettingsChanged: loadTermSettings, 
           keys={keyList}
           vpns={vpnList}
           vaults={vaults}
+          live={live}
           onOpen={(id) => open({ kind: "groupPage", id })}
           onEdit={(id) => open({ kind: "group", id })}
           onClose={close}
@@ -922,6 +1011,7 @@ function Workspace({ onLock, termSettings, onSettingsChanged: loadTermSettings, 
           live={live}
           pending={pending}
           onConnect={(h) => connectHost(h)}
+          onShowSession={showSession}
           onFiles={(h) => connectHost(h, undefined, "sftp")}
           onEditHost={(id) => open({ kind: "host", id })}
           onEditGroup={(id) => open({ kind: "group", id })}
@@ -945,6 +1035,8 @@ function Workspace({ onLock, termSettings, onSettingsChanged: loadTermSettings, 
           onOpenKey={(id) => open({ kind: "key", id })}
           onEditIdentity={(id) => open({ kind: "identity", id })}
           onEditHostCa={(id) => open({ kind: "hostCa", id })}
+          tab={view.tab ?? "keys"}
+          onTab={(tab) => setView({ kind: "keys", tab })}
           onClose={close}
         />
       )}
@@ -965,6 +1057,7 @@ function Workspace({ onLock, termSettings, onSettingsChanged: loadTermSettings, 
           forwards={forwardList}
           hosts={hostList}
           vaults={vaults}
+          live={live}
           pending={pending}
           onToggle={toggleForward}
           onOpen={(id) => open({ kind: "forward", id })}
@@ -984,6 +1077,7 @@ function Workspace({ onLock, termSettings, onSettingsChanged: loadTermSettings, 
           later={mobile ? "More › Sync" : "Sync, at the bottom of the sidebar"}
           onDone={(enabled) => {
             setOffering(false);
+            syncOfferTime.forget();
             if (enabled) void syncApi.status().then(setSyncStatus).then(refresh);
           }}
         />
@@ -1009,6 +1103,19 @@ function Workspace({ onLock, termSettings, onSettingsChanged: loadTermSettings, 
         </div>
       )}
       {prompts[0] && <HostKeyDialog key={prompts[0].promptId} prompt={prompts[0]} onAnswer={(a) => answer(prompts[0], a)} />}
+      {checking && (
+        <SnippetCheckDialog
+          key={checking.snippet.id}
+          snippet={checking.snippet}
+          run={checking.run}
+          onAnswer={(send) => {
+            setChecking(null);
+            if (!send) return;
+            checking.go();
+            markSent(checking.snippet.id);
+          }}
+        />
+      )}
       {askPassword && (
         <PasswordDialog
           title={`Password for ${askPassword.host.user}@${askPassword.host.hostname}`}
@@ -1069,9 +1176,10 @@ function Workspace({ onLock, termSettings, onSettingsChanged: loadTermSettings, 
             open(p === "quick" ? { kind: "connect" } : p === "forwards" ? { kind: "forward" } : p === "logs" ? { kind: "logs" } : { kind: p })
           }
           onLock={onLock}
+          onTotp={() => open({ kind: "sync", totp: true })}
           onSso={setSsoFor}
           onApproval={setApprovalFor}
-          onSend={sendTo}
+          onSend={(key, body, run, snippet) => guardSnippet(snippet, run, () => sendTo(key, body, run))}
           onKey={(key, k) => controls.current.get(key)?.key(k)}
           onCtrl={(key, on, used) => controls.current.get(key)?.ctrl(on, used)}
         />
@@ -1099,6 +1207,7 @@ function Workspace({ onLock, termSettings, onSettingsChanged: loadTermSettings, 
           activeHost={currentHost?.id ?? null}
           live={live}
           onConnect={(h) => connectHost(h)}
+          onShowSession={showSession}
           onOpenFiles={(h) => connectHost(h, undefined, "sftp")}
           onEditHost={(id) => open({ kind: "host", id })}
           onEditGroup={(id) => open({ kind: "group", id })}
@@ -1107,6 +1216,7 @@ function Workspace({ onLock, termSettings, onSettingsChanged: loadTermSettings, 
           onOpenSync={() => open({ kind: "sync" })}
           vaults={vaults}
           onOpenTeams={() => open({ kind: "teams" })}
+          onTotp={() => open({ kind: "sync", totp: true })}
           onSso={setSsoFor}
           onApproval={setApprovalFor}
           onOpenAppearance={() => open({ kind: "appearance" })}
@@ -1182,10 +1292,12 @@ function Workspace({ onLock, termSettings, onSettingsChanged: loadTermSettings, 
               vpns={vpnList}
               onFiles={currentHost && (() => connectHost(currentHost, undefined, "sftp"))}
               snippets={snippetList}
-              onSend={(body, run) =>
-                currentSplit?.broadcast
-                  ? panes(currentSplit.layout).forEach((k) => tabs.find((t) => t.key === k)?.status === "connected" && sendTo(k, body, run, false))
-                  : sendTo(current.key, body, run)
+              onSend={(snippet, run) =>
+                guardSnippet(snippet, run, () =>
+                  currentSplit?.broadcast
+                    ? panes(currentSplit.layout).forEach((k) => tabs.find((t) => t.key === k)?.status === "connected" && sendTo(k, snippet.body, run, false))
+                    : sendTo(current.key, snippet.body, run),
+                )
               }
               onSplit={splitWith}
               broadcast={currentSplit ? { on: currentSplit.broadcast, panes: panes(currentSplit.layout).length } : null}

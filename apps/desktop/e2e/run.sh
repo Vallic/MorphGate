@@ -21,8 +21,8 @@ if [ -z "${XDG_RUNTIME_DIR:-}" ]; then
 fi
 
 # Free ports unless given: several runs can share a machine.
-free=$(node "$here/free-ports.mjs" 5)
-read -r free_feed free_ssh free_sync free_idp free_vallic <<EOF
+free=$(node "$here/free-ports.mjs" 6)
+read -r free_feed free_ssh free_sync free_idp free_vallic free_hosts <<EOF
 $free
 EOF
 feed_port=${E2E_FEED_PORT:-$free_feed}
@@ -30,6 +30,7 @@ ssh_port=${E2E_SSH_PORT:-$free_ssh}
 sync_port=${E2E_SYNC_PORT:-$free_sync}
 idp_port=${E2E_IDP_PORT:-$free_idp}
 vallic_port=${E2E_VALLIC_PORT:-$free_vallic}
+host_feed_port=${E2E_HOST_FEED_PORT:-$free_hosts}
 export TAURI_DRIVER=${TAURI_DRIVER:-tauri-driver}
 
 want() {
@@ -102,7 +103,7 @@ cleanup() {
   rm -rf "$tmux_dir"
   # The AppImages unpacked to run (APPIMAGE_EXTRACT_AND_RUN): a few hundred MB per launch of a
   # new build, otherwise left behind in /tmp by every run.
-  rm -rf "$run/appimage/tmp"
+  rm -rf "$run/appimage/tmp" "$run/demo/tmp"
 }
 trap cleanup EXIT INT TERM
 
@@ -127,6 +128,8 @@ ListenAddress 127.0.0.1
 ListenAddress 127.0.0.2
 # The host certificate's address (a client that trusts the host CA asks for it there).
 ListenAddress 127.0.0.3
+# The feed's hosts (host-feed.mjs), whose host key the feed lists.
+ListenAddress 127.0.0.4
 HostKey $run/sshd/host_key
 HostCertificate $run/sshd/host_key-cert.pub
 PidFile $run/sshd/sshd.pid
@@ -163,6 +166,15 @@ for _ in $(seq 1 50); do
 done
 export MORPHGATE_VALLIC_CONSOLE="http://127.0.0.1:$vallic_port"
 
+# A stand-in feed of hosts and snippets, whose host is the sshd above.
+export E2E_HOST_FEED="http://127.0.0.1:$host_feed_port/morphgate.json" E2E_HOST_FEED_TOKEN="e2e-feed-token-0123456789abcdef"
+node "$here/host-feed.mjs" "$host_feed_port" "$run/sshd/host_key.pub" "$ssh_port" "$(id -un)" >"$run/host-feed.log" 2>&1 &
+pids="$pids $!"
+for _ in $(seq 1 50); do
+  curl -s "http://127.0.0.1:$host_feed_port/" >/dev/null 2>&1 && break
+  sleep 0.2
+done
+
 # A stand-in aws CLI (clouds/aws), whose running instance is the sshd above.
 export MORPHGATE_CLOUD_CLI_DIR="$here/clouds" E2E_CLOUD_PORT="$ssh_port" E2E_CLOUD_USER="$(id -un)"
 
@@ -188,7 +200,7 @@ if want appimage; then
   # launch (binfmt), the app's own relaunch after an update included. TMPDIR: where an AppImage
   # unpacks to run, in the run's folder rather than /tmp, removed when the run ends.
   mkdir -p "$run/appimage/tmp"
-  APPIMAGE_EXTRACT_AND_RUN=1 APPIMAGELAUNCHER_DISABLE=1 TMPDIR="$run/appimage/tmp" MORPHGATE_BROWSER="$here/browser.sh" \
+  APPIMAGE_EXTRACT_AND_RUN=1 APPIMAGELAUNCHER_DISABLE=1 TMPDIR="$run/appimage/tmp" MORPHGATE_BROWSER="$here/browser.sh" E2E_BROWSER_LOG="$run/appimage/browser.log" \
     dbus-run-session -- "$here/session.sh" "$run/appimage" \
     node "$here/appimage.mjs" "$run/appimage/$appimage" "$run/appimage/shots" "$run/feed" \
     "$run/sshd/client_key" "$ssh_port" "$(id -un)" "$version" "$next" 2>"$run/appimage/stderr.log"
@@ -240,6 +252,38 @@ if want mobile; then
   dbus-run-session -- "$here/session.sh" "$run/mobile" \
     node "$here/mobile.mjs" "$run/mobile/root/usr/bin/morphgate" "$run/mobile/shots" \
     "$run/mobile/key" "$ssh_port" "$(id -un)" 2>"$run/mobile/stderr.log"
+fi
+
+# A monkey test of each package, only when asked for: E2E_ONLY=monkey (MONKEY_STEPS, MONKEY_SEED).
+if [ -n "${E2E_ONLY:-}" ] && want monkey; then
+  for pkg in appimage deb rpm; do
+    echo "e2e: monkey ($pkg)"
+    dir="$run/monkey-$pkg"
+    mkdir -p "$dir/root" "$dir/tmp"
+    case $pkg in
+      appimage) cp "$artifacts/$appimage" "$dir/" && bin="$dir/$appimage" ;;
+      deb) (cd "$dir/root" && ar x "$artifacts/$deb" && tar -xzf data.tar.gz) && bin="$dir/root/usr/bin/morphgate" ;;
+      rpm) (cd "$dir/root" && rpm2cpio "$artifacts/$rpm" | cpio -idm --quiet) && bin="$dir/root/usr/bin/morphgate" ;;
+    esac
+    APPIMAGE_EXTRACT_AND_RUN=1 APPIMAGELAUNCHER_DISABLE=1 TMPDIR="$dir/tmp" MORPHGATE_BROWSER="$here/browser.sh" \
+      dbus-run-session -- "$here/session.sh" "$dir" node "$here/monkey.mjs" "$bin" "$dir" "$pkg" 2>"$dir/stderr.log"
+    # A panic in the app's Rust side counts too.
+    if grep -h "panicked at" "$dir"/*.log; then echo "e2e: monkey ($pkg): the app panicked" >&2; exit 1; fi
+    rm -rf "$dir/tmp"
+  done
+fi
+
+# The README's demo (assets/demo/morphgate.svg), only when asked for: E2E_ONLY=demo.
+if [ -n "${E2E_ONLY:-}" ] && want demo; then
+  echo "e2e: demo (the AppImage's Hosts page and a session, drawn for the README)"
+  mkdir -p "$run/demo/tmp"
+  cp "$artifacts/$appimage" "$run/demo/"
+  APPIMAGE_EXTRACT_AND_RUN=1 APPIMAGELAUNCHER_DISABLE=1 TMPDIR="$run/demo/tmp" \
+    dbus-run-session -- "$here/session.sh" "$run/demo" \
+    node "$here/demo.mjs" "$run/demo/$appimage" "$run/demo" "$run/sshd/client_key" "$ssh_port" "$(id -un)" 2>"$run/demo/stderr.log"
+  [ -d "$root/tools/readme-demo/node_modules" ] || npm ci --prefix "$root/tools/readme-demo" --silent
+  node "$root/tools/readme-demo/demo-svg.mjs" "$run/demo/demo.json" "$run/demo/morphgate.svg"
+  echo "e2e: demo drawn: $run/demo/morphgate.svg (copy it to assets/demo/morphgate.svg)"
 fi
 
 echo "e2e: all scenarios passed; screenshots and logs in $run"

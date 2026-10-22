@@ -3,6 +3,7 @@ import { errorText, OC_PROTOCOLS, VPN_KINDS, vpnKindName, vpns, type HostView, t
 import { FilePick, type PickedFile } from "./FilePick";
 import { isReadOnly, personalVault, VaultField } from "./VaultField";
 import { mobileOs } from "./mobile/useMobile";
+import { copyText } from "./clipboard";
 
 interface Props {
   vpn?: VpnView;
@@ -48,6 +49,7 @@ export function VpnPanel({ vpn, hosts, vaults, onSaved, onChanged, onDeleted, on
   const [error, setError] = useState("");
   const [test, setTest] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [copyFailed, setCopyFailed] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   const users = vpn ? hosts.filter((h) => h.vpnId === vpn.id) : [];
@@ -149,8 +151,13 @@ export function VpnPanel({ vpn, hosts, vaults, onSaved, onChanged, onDeleted, on
                 <dt>Your key</dt>
                 <dd className="mono key-line">
                   {vpn.publicKey}
-                  <button type="button" className="icon small" title="Copy public key" onClick={() => void navigator.clipboard?.writeText(vpn.publicKey ?? "").then(() => setCopied(true))}>
-                    {copied ? "✓" : "⧉"}
+                  <button
+                    type="button"
+                    className="icon small"
+                    title={copyFailed ? "Couldn't copy: select the key" : "Copy public key"}
+                    onClick={() => void copyText(vpn.publicKey ?? "").then((ok) => (ok ? setCopied(true) : setCopyFailed(true)))}
+                  >
+                    {copied ? "✓" : copyFailed ? "!" : "⧉"}
                   </button>
                 </dd>
               </>

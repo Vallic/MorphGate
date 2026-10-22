@@ -11,7 +11,7 @@ use ulid::Ulid;
 use zeroize::Zeroizing;
 
 use crate::model::SCHEMA_VERSION;
-use crate::{Error, ForwardRule, Host, HostAuth, Item, ItemData, Result, schema};
+use crate::{Error, ForwardRule, Host, HostAuth, Item, ItemData, Result, history, schema};
 
 pub const MIN_PASSWORD_CHARS: usize = 10;
 /// Longest allowed chain of jump hosts in front of a target.
@@ -175,6 +175,9 @@ pub struct LocalVault {
     pub(crate) conn: Connection,
     pub(crate) keys: Option<Unlocked>,
     kdf_cost: Option<(u32, u32, u32)>,
+    /// Refuse unversioned changes to items that have a version (see
+    /// [`set_strict_history`](Self::set_strict_history)).
+    pub(crate) strict_history: bool,
 }
 
 impl LocalVault {
@@ -207,7 +210,15 @@ impl LocalVault {
             conn,
             keys: None,
             kdf_cost: None,
+            strict_history: false,
         })
+    }
+
+    /// Strict item history: once an item has a version here, a change to it without one or a
+    /// deletion without a signature (what apps before item history send, and what a server
+    /// could make up) is refused instead of applied. Off while such apps may still write.
+    pub fn set_strict_history(&mut self, strict: bool) {
+        self.strict_history = strict;
     }
 
     /// Argon2id cost (`m_kib`, `t`, `p`) for passwords set from now on. The `mg-vault` floors still
@@ -631,6 +642,35 @@ impl LocalVault {
         })
     }
 
+    /// Creates item `id` in `vault_id`: an id worked out rather than drawn ([`derived_id`]), so
+    /// two devices making the same item write the same one, and the second gets a conflict
+    /// instead of a duplicate. Refused when a live item has the id.
+    pub fn insert_in(&mut self, vault_id: &str, id: &str, data: ItemData) -> Result<Item> {
+        if self.unlocked()?.access(vault_id)? < Access::Write {
+            return Err(Error::ReadOnly);
+        }
+        if data == ItemData::Unknown {
+            return Err(Error::Invalid(
+                "this app can't edit that kind of item".into(),
+            ));
+        }
+        let live: bool = self.conn.query_row(
+            "SELECT EXISTS (SELECT 1 FROM items WHERE id = ?1 AND deleted = 0)",
+            [id],
+            |r| r.get(0),
+        )?;
+        if live {
+            return Err(Error::Invalid(format!("item {id} already exists")));
+        }
+        let now = self.put(vault_id, id, &data)?;
+        Ok(Item {
+            id: id.to_owned(),
+            vault_id: vault_id.to_owned(),
+            updated_at: now,
+            data,
+        })
+    }
+
     /// Checks `data` as an item `id` of `vault`, seals it with the vault's current key and stores
     /// it for the next sync (over a tombstone of the same id, too). Returns the time stamped.
     pub(crate) fn put(&mut self, vault_id: &str, id: &str, data: &ItemData) -> Result<i64> {
@@ -641,9 +681,9 @@ impl LocalVault {
     /// [`put`](Self::put) without the checks, for writes that are checked together afterwards
     /// (a move, whose items may refer to each other in a circle).
     pub(crate) fn write(&mut self, vault_id: &str, id: &str, data: &ItemData) -> Result<i64> {
+        let version = self.next_version(vault_id, id)?;
         let keys = self.unlocked()?;
-        let plain =
-            Zeroizing::new(serde_json::to_vec(data).map_err(|e| Error::Invalid(e.to_string()))?);
+        let plain = history::plaintext(data, version)?;
         let env = envelope::seal(
             keys.current(vault_id)?,
             &keys.account,
@@ -652,12 +692,60 @@ impl LocalVault {
         )?;
         let now = now();
         self.conn.execute(
-            "INSERT INTO items (id, vault_id, envelope, deleted, dirty, updated_at, author_id) VALUES (?1, ?2, ?3, 0, 1, ?4, NULL)
+            "INSERT INTO items (id, vault_id, envelope, deleted, dirty, updated_at, author_id, version, seen_version)
+             VALUES (?1, ?2, ?3, 0, 1, ?4, NULL, ?5, 0)
              ON CONFLICT (vault_id, id) DO UPDATE SET envelope = excluded.envelope, deleted = 0, dirty = 1,
-                                                      updated_at = excluded.updated_at, author_id = NULL",
-            params![id, vault_id, env, now],
+                                                      updated_at = excluded.updated_at, author_id = NULL,
+                                                      version = excluded.version",
+            params![id, vault_id, env, now, version],
         )?;
         Ok(now)
+    }
+
+    /// The version for the next write of item `id` of `vault`: after the highest this device
+    /// knows of it (its own copy's, or the last one the server confirmed).
+    pub(crate) fn next_version(&self, vault: &str, id: &str) -> Result<i64> {
+        let keys = self.unlocked()?;
+        let row: Option<VersionRow> = self
+            .conn
+            .query_row(
+                "SELECT version, seen_version, envelope, author_id FROM items WHERE vault_id = ?1 AND id = ?2",
+                params![vault, id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .optional()?;
+        let known = match row {
+            None => 0,
+            Some((version, seen, env, author)) => {
+                let own = match (version, env) {
+                    (Some(v), _) => v,
+                    // A copy from before item history: its envelope may still hold a version
+                    // (another app wrote it).
+                    (None, Some(env)) => version_in(keys, vault, id, &env, author.as_deref()),
+                    (None, None) => 0,
+                };
+                own.max(seen.unwrap_or(0))
+            }
+        };
+        Ok(history::next(known))
+    }
+
+    /// Replaces item `id` of `vault` with a signed deletion for the next sync.
+    pub(crate) fn tombstone(&mut self, vault: &str, id: &str, stamp: i64) -> Result<()> {
+        let version = self.next_version(vault, id)?;
+        let keys = self.unlocked()?;
+        let env = envelope::seal(
+            keys.current(vault)?,
+            &keys.account,
+            &context(vault, id),
+            &history::deletion(version),
+        )?;
+        self.conn.execute(
+            "UPDATE items SET envelope = ?3, deleted = 1, dirty = 1, updated_at = ?4, version = ?5
+             WHERE vault_id = ?1 AND id = ?2",
+            params![vault, id, env, stamp, version],
+        )?;
+        Ok(())
     }
 
     /// Replaces the item with a tombstone so the deletion can sync.
@@ -682,6 +770,9 @@ impl LocalVault {
                 ItemData::Host(h) if h.identity_ref.as_deref() == Some(id) => Some(h.label),
                 ItemData::Host(h) if h.source.as_ref().is_some_and(|s| s.source_ref == id) => {
                     Some(h.label)
+                }
+                ItemData::Snippet(s) if s.source.as_ref().is_some_and(|s| s.source_ref == id) => {
+                    Some(format!("snippet {}", s.name))
                 }
                 ItemData::CloudSource(c)
                     if c.key_ref.as_deref() == Some(id) || c.jump_ref.as_deref() == Some(id) =>
@@ -726,11 +817,7 @@ impl LocalVault {
                 users.join(", ")
             )));
         }
-        self.conn.execute(
-            "UPDATE items SET envelope = NULL, deleted = 1, dirty = 1, updated_at = ?3
-             WHERE vault_id = ?1 AND id = ?2",
-            params![item.vault_id, id, now()],
-        )?;
+        self.tombstone(&item.vault_id, id, now())?;
         // A session log's recording, or an attachment's file, goes with it.
         let blobs = item.data.blob_refs();
         if !blobs.is_empty() {
@@ -1063,6 +1150,14 @@ impl LocalVault {
                 if s.name.trim().is_empty() {
                     return invalid("snippet name is required");
                 }
+                if let Some(source) = &s.source {
+                    self.expect(
+                        vault,
+                        &source.source_ref,
+                        "the snippet's feed does not exist",
+                        |d| matches!(d, ItemData::CloudSource(_)),
+                    )?;
+                }
             }
             ItemData::MemberKey(k) => {
                 if k.account_id.is_empty() || k.public_key.split_ascii_whitespace().count() != 2 {
@@ -1169,12 +1264,35 @@ impl LocalVault {
                 }
             }
             ItemData::CloudSource(c) => {
-                if !["vallic", "aws", "gcp", "azure", "hetzner", "digitalocean"]
-                    .contains(&c.provider.as_str())
+                if ![
+                    "vallic",
+                    "aws",
+                    "gcp",
+                    "azure",
+                    "hetzner",
+                    "digitalocean",
+                    "feed",
+                ]
+                .contains(&c.provider.as_str())
                 {
                     return invalid(
-                        "a cloud source's provider is vallic, aws, gcp, azure, hetzner or digitalocean",
+                        "a cloud source's provider is vallic, aws, gcp, azure, hetzner, digitalocean or feed",
                     );
+                }
+                if c.provider == "feed" {
+                    let url = c.url.as_deref().unwrap_or("");
+                    let local = ["localhost", "127.0.0.1", "[::1]"].iter().any(|h| {
+                        url.strip_prefix("http://").is_some_and(|rest| {
+                            rest.strip_prefix(h)
+                                .is_some_and(|r| r.is_empty() || r.starts_with([':', '/']))
+                        })
+                    });
+                    if !(url.starts_with("https://") && url.len() > 8) && !local {
+                        return invalid("a feed's address starts with https://");
+                    }
+                    if c.token.as_deref().is_none_or(|t| t.trim().is_empty()) {
+                        return invalid("a feed needs the token it's read with");
+                    }
                 }
                 if let Some(key) = &c.key_ref {
                     self.expect(vault, key, "the selected key does not exist", |d| {
@@ -1465,6 +1583,24 @@ pub(crate) fn open_envelope(
     Ok(envelope::open(vk, &signer, &context(vault, id), env)?)
 }
 
+/// `(version, seen_version, envelope, author_id)` of a local item.
+type VersionRow = (Option<i64>, Option<i64>, Option<Vec<u8>>, Option<String>);
+
+/// The version in a stored envelope of item `id`; 0 when it has none or can't be read.
+pub(crate) fn version_in(
+    keys: &Unlocked,
+    vault: &str,
+    id: &str,
+    env: &[u8],
+    author: Option<&str>,
+) -> i64 {
+    open_envelope(keys, vault, id, env, author)
+        .and_then(|plain| history::read(id, &plain))
+        .ok()
+        .and_then(|copy| copy.version)
+        .unwrap_or(0)
+}
+
 pub(crate) fn decrypt(
     keys: &Unlocked,
     vault: &str,
@@ -1474,6 +1610,24 @@ pub(crate) fn decrypt(
 ) -> Result<ItemData> {
     let plain = open_envelope(keys, vault, id, env, author)?;
     serde_json::from_slice(&plain).map_err(|e| Error::Corrupt(format!("item {id}: {e}")))
+}
+
+/// An item id worked out from `parts` rather than drawn: SHA-256 of them, as a ULID. Every
+/// device that makes the item from the same parts (a source's vault, the source, what it lists)
+/// gives it the same id.
+pub fn derived_id(parts: &[&str]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hash = Sha256::new();
+    hash.update(b"morphgate derived item id v1");
+    for p in parts {
+        // Each part with its length: no two lists of parts run together the same.
+        hash.update((p.len() as u64).to_be_bytes());
+        hash.update(p.as_bytes());
+    }
+    let digest = hash.finalize();
+    let mut bytes = [0u8; 16];
+    bytes.copy_from_slice(&digest[..16]);
+    Ulid::from_bytes(bytes).to_string()
 }
 
 pub(crate) fn now() -> i64 {
@@ -1731,6 +1885,7 @@ mod tests {
                     name: "disk".into(),
                     body: "df -h".into(),
                     tags: vec![],
+                    source: None,
                 }),
             )
             .unwrap();
@@ -1746,6 +1901,12 @@ mod tests {
         v.upsert(Some(&h.id), edited.clone()).unwrap();
         assert_eq!(v.item(&h.id).unwrap().data, edited);
 
+        let before: i64 = v
+            .conn
+            .query_row("SELECT version FROM items WHERE id = ?1", [&s.id], |r| {
+                r.get(0)
+            })
+            .unwrap();
         v.delete(&s.id).unwrap();
         assert!(matches!(v.item(&s.id), Err(Error::NotFound(_))));
         assert_eq!(v.items().unwrap().len(), 2);
@@ -1757,10 +1918,19 @@ mod tests {
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             )
             .unwrap();
-        assert!(
-            deleted && envelope.is_none() && dirty,
-            "deletes become syncable tombstones"
-        );
+        assert!(deleted && dirty, "deletes become syncable tombstones");
+        // Signed by this account, for this item, with a version after the item's.
+        let plain = open_envelope(
+            v.unlocked().unwrap(),
+            &s.vault_id,
+            &s.id,
+            &envelope.expect("a signed deletion"),
+            None,
+        )
+        .unwrap();
+        let gone = history::read(&s.id, &plain).unwrap();
+        assert!(gone.data.is_none());
+        assert!(gone.version.unwrap() > before);
     }
 
     #[test]

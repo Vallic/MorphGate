@@ -26,7 +26,7 @@ Start with [Architecture](architecture.md), then the feature you're working on. 
 | [SFTP](features/sftp.md) | The file browser, transfers, conflicts |
 | [Session logs](features/session-logs.md) | Recording sessions, sealed chunks, uploading and playback |
 | [Importing](features/importing.md) | Hosts from OpenSSH, PuTTY, CSV and Royal TS; snippets from CSV |
-| [Cloud sources](features/cloud-sources.md) | Hosts from Vallic Cloud, AWS, Google Cloud, Azure, Hetzner Cloud and DigitalOcean |
+| [Cloud sources](features/cloud-sources.md) | Hosts from Vallic Cloud, AWS, Google Cloud, Azure, Hetzner Cloud and DigitalOcean, and hosts and snippets from a feed |
 | **Sync and teams** | |
 | [Sync](features/sync.md) | Choosing a server, signing up and in, two-step verification, the push and pull cycle, conflicts, plans and limits |
 | [Account and devices](features/account-and-devices.md) | The device list, signing devices out, erasing a revoked device, disconnecting, deleting the account, the website account page, device approval, single sign-on |

@@ -7,6 +7,7 @@
 // mails sign-up codes (Mailpit's web address), for servers that verify addresses.
 
 import assert from "node:assert/strict";
+import { createHmac } from "node:crypto";
 
 export const PASSWORD = "correct horse battery staple";
 
@@ -97,10 +98,10 @@ export async function signUp(s, { server, email, mailpit, password = PASSWORD })
   await s.waitText("Last sync", ".panel", 60000);
 }
 
-/** J3: the first screen's "I have an account" (a fresh device). */
+/** J3: the first screen's "Sign in" (a fresh device). */
 export async function signInFresh(s, { server, email, password = PASSWORD }) {
   await s.wait(() => s.exec(`return document.querySelector(".gate-choice") ? true : null`), "the first screen");
-  await s.exec(`[...document.querySelectorAll(".gate-choice button")].find((b) => b.innerText === "I have an account").click(); return true`);
+  await s.exec(`[...document.querySelectorAll(".gate-choice button")].find((b) => b.innerText === "Sign in").click(); return true`);
   await chooseServer(s, server);
   await s.typeLabelled("Email", email);
   await s.typeLabelled("Master password", password);
@@ -112,7 +113,7 @@ export async function signInFresh(s, { server, email, password = PASSWORD }) {
 export async function openTeams(s) {
   await s.click("button.sidebar-foot.teams");
   await s.exec(
-    `const b = [...document.querySelectorAll(".panel button.link")].find((b) => b.innerText.includes("All organizations"));
+    `const b = [...document.querySelectorAll(".panel button.link")].find((b) => b.innerText.trim() === "← Teams");
      if (b) b.click(); return true`,
   );
   await s.waitText("Your fingerprint", ".panel");
@@ -120,8 +121,8 @@ export async function openTeams(s) {
 
 export async function openOrg(s, name) {
   await s.exec(
-    `const li = [...document.querySelectorAll(".panel .device-list li")].find((l) => l.querySelector("strong")?.innerText === arguments[0]);
-     li.querySelector("button").click(); return true`,
+    `const row = [...document.querySelectorAll(".panel [role=row]")].find((r) => r.querySelector(".lname")?.innerText === arguments[0]);
+     row.querySelector("button.lnamebtn").click(); return true`,
     name,
   );
   await s.waitText("Members", ".panel");
@@ -131,12 +132,16 @@ export async function openOrg(s, name) {
 export async function createTeam(s, name, vault) {
   await openTeams(s);
   const fp = await fingerprint(s);
-  await s.type('input[aria-label="Organization name"]', name);
-  await s.clickButton("Create");
+  await s.clickButton("New team");
+  await s.type('input[aria-label="Team name"]', name);
+  await s.clickButton("Create team");
+  await s.wait(() => s.exec(`return document.querySelector(".panel.page h1")?.innerText === arguments[0] || null`, name), "the team's page");
+  await s.pageTab("Vaults");
   await s.waitText("No vaults yet", ".panel");
-  await s.type('input[aria-label="New vault name"]', vault);
   await s.clickButton("New vault");
-  await s.wait(() => s.hasText(".panel .device-list strong", vault), "the new vault");
+  await s.type('input[aria-label="Vault name"]', vault);
+  await s.clickButton("Create vault");
+  await s.wait(() => s.hasText(".panel .lname", vault), "the new vault");
   return fp;
 }
 
@@ -162,19 +167,22 @@ export async function mailedInvite(mailpit, to, since, ms = 30000) {
  * the mail (Mailpit) where the server mails it.
  */
 export async function invite(s, email, { mailpit } = {}) {
-  await s.type('input[aria-label="Email to invite"]', email);
+  await s.clickButton("Invite people");
+  await s.wait(() => s.exec(`return document.querySelector("dialog.invite-dialog[open]") ? true : null`), "the invite dialog");
+  await s.type('input[aria-label="Emails to invite"]', email);
   for (const box of await s.exec(`return document.querySelectorAll(".grants input[type=checkbox]").length`).then((n) => [...Array(n).keys()])) {
     await s.exec(`document.querySelectorAll(".grants input[type=checkbox]")[arguments[0]].click(); return true`, box);
   }
   const since = Date.now();
-  await s.clickButton("Invite");
+  await s.clickButton("Send invite");
   const shown = await s.wait(
     () =>
       s.exec(
-        `const c = document.querySelector(".invite-code"); return c ? { token: c.innerText.trim() } : document.querySelector(".panel").innerText.includes("Invite emailed to") ? { mailed: true } : null`,
+        `const c = document.querySelector(".invite-code"); return c ? { token: c.innerText.trim() } : document.querySelector("dialog.invite-dialog")?.innerText.includes("Invite emailed to") ? { mailed: true } : null`,
       ),
     "the invite code, or that it was mailed",
   );
+  await s.clickButton("Done");
   if (shown.token) return shown.token;
   assert.ok(mailpit, "the server mails invites: pass where to read them (Mailpit)");
   return mailedInvite(mailpit, email, since);
@@ -183,10 +191,16 @@ export async function invite(s, email, { mailpit } = {}) {
 /** T2 (the invitee): joins after checking the owner's fingerprint. Returns the member's own. */
 export async function acceptInvite(s, token, ownerFp, team) {
   await openTeams(s);
-  const fp = await fingerprint(s);
   await s.type('input[aria-label="Invite code"]', token);
   await s.clickButton("Look up");
-  await s.waitText("Join only if", ".panel");
+  return joinLookedUp(s, ownerFp, team);
+}
+
+/** T2 (the invitee, in Teams with the invite looked up): compares the owner's fingerprint and
+ * joins. Returns the member's own. */
+export async function joinLookedUp(s, ownerFp, team) {
+  await s.waitText("Join only if", ".panel", 30000);
+  const fp = await fingerprint(s, ".teams-foot > .stack > .fingerprint");
   assert.equal(await fingerprint(s, ".notice-box .fingerprint"), ownerFp);
   await s.click(".notice-box label.check input");
   await s.clickButton(`Join ${team}`);
@@ -194,22 +208,72 @@ export async function acceptInvite(s, token, ownerFp, team) {
   return fp;
 }
 
+/**
+ * J2 and T2 on a fresh install: the invite pasted on the first screen ("Joining a team?"), a new
+ * account with the address it names and a suggested password, then Teams opens with the invite
+ * looked up. Returns the password.
+ */
+export async function newAccountFromInvite(s, { invite, team, email, mailpit, shots }) {
+  await s.wait(() => s.exec(`return document.querySelector(".gate-choice") ? true : null`), "the first screen");
+  await s.clickButton("Joining a team? Paste your invite");
+  await s.typeLabelled("Invite code or link", invite);
+  await s.clickButton("Use this invite");
+  await s.waitText(`to join ${team}`, ".gate-invite", 30000);
+  // An invite needs an account: offered first, with the invited address.
+  await s.waitText("Create your account", ".gate-card");
+  await s.wait(() => s.exec(`return document.querySelector(".gate-card input[type=email]")?.value === arguments[0] || null`, email), "the invited address");
+  await s.clickButton("Suggest a strong password");
+  const password = await s.wait(() => s.exec(`return document.querySelector(".suggested-password .mono")?.innerText || null`), "a suggested password");
+  if (shots) await s.screenshot(`${shots}/first-screen-invite.png`);
+  // The server's terms, once it was asked what it needs (none on a server without them).
+  await s.wait(() => s.exec(`return document.querySelector(".gate-card .terms-check") ? true : null`), "the terms", 10000).catch(() => {});
+  if (await s.exec(`return !!document.querySelector(".gate-card .terms-check input")`)) await s.click(".gate-card .terms-check input");
+  // The recovery key (the account is made), an error, or (`code`: the first step) the mailed code's field.
+  const step = (code, what, ms) =>
+    s.wait(
+      () =>
+        s.exec(
+          `const e = document.querySelector(".gate-card p.error"); if (e) return { error: e.innerText };
+          if (document.querySelector(".recovery-code")) return "done";
+          return arguments[0] && [...document.querySelectorAll(".gate-card label span")].some((l) => l.innerText.startsWith("Code sent to")) ? "code" : null`,
+          code,
+        ),
+      what,
+      ms,
+    );
+  const since = Date.now();
+  await s.click(".gate-card form button.primary");
+  let next = await step(true, "a mailed code, or the account", 60000);
+  if (next === "code") {
+    assert.ok(mailpit, "the server mails a code: pass where to read it (Mailpit)");
+    await s.typeLabelled("Code sent to", await mailedCode(mailpit, email, since));
+    await s.click(".gate-card form button.primary");
+    next = await step(false, "the account", 90000);
+  }
+  assert.equal(next, "done", JSON.stringify(next));
+  await s.click(".gate-card label.check input");
+  await s.exec(`[...document.querySelectorAll(".gate-card button.primary")].find((b) => !b.disabled).click(); return true`);
+  await s.wait(() => s.exec(`return document.querySelector("button.brand, .m-home") ? true : null`), "the workspace", 30000);
+  return password;
+}
+
 /** T2 (an owner or admin, in the organization's page): confirms `email` after checking its fingerprint. */
 export async function confirmMember(s, email, memberFp) {
-  await s.waitText("Waiting for confirmation", ".panel", 30000);
+  await s.pageTab("Members");
+  await s.waitText("To confirm", ".panel", 30000);
   await s.clickButton("Confirm…");
-  assert.equal(await fingerprint(s, "li.nested .fingerprint"), memberFp);
-  await s.click("li.nested label.check input");
+  assert.equal(await fingerprint(s, ".lexpand .fingerprint"), memberFp);
+  await s.click(".lexpand label.check input");
   await s.clickButton(`Confirm ${email}`);
-  await s.wait(() => s.exec(`return document.querySelector(".panel").innerText.includes("Waiting for confirmation") ? null : true`), "the confirmation", 30000);
+  await s.wait(() => s.exec(`return document.querySelector(".panel").innerText.includes("To confirm") ? null : true`), "the confirmation", 30000);
 }
 
 /** T6 (an owner or admin, in the organization's page): removes `email` and rotates keys. */
 export async function removeMember(s, email) {
-  // The "Remove…" on `email`'s row (the smallest list item naming them that has one).
-  const row = `[...document.querySelectorAll(".panel li")]
-    .filter((l) => l.innerText.includes(arguments[0]) && [...l.querySelectorAll("button")].some((b) => b.innerText.includes("Remove…")))
-    .sort((a, b) => a.innerText.length - b.innerText.length)[0]`;
+  // The "Remove…" on `email`'s row in the member list.
+  await s.pageTab("Members");
+  const row = `[...document.querySelectorAll(".panel [role=row]")]
+    .find((r) => r.querySelector(".lname")?.innerText === arguments[0] && [...r.querySelectorAll("button")].some((b) => b.innerText.includes("Remove…")))`;
   await s.wait(() => s.exec(`return ${row} ? true : null`, email), `${email} in the member list`);
   await s.exec(`[...${row}.querySelectorAll("button")].find((b) => b.innerText.includes("Remove…")).click(); return true`, email);
   await s.waitText("1. What they can open", ".panel");
@@ -335,7 +399,8 @@ export async function signInAgain(s, password = PASSWORD) {
 
 /** T8 (the owner, in the organization's page): deletes it. */
 export async function deleteTeam(s, name, password = PASSWORD) {
-  await s.clickButton("Delete organization");
+  await s.pageTab("Settings");
+  await s.clickButton("Delete team…");
   await s.typeLabelled("Your master password", password);
   await clickWhenEnabled(s, `Delete ${name}`);
   await s.waitText("Your fingerprint", ".panel", 60000);
@@ -346,6 +411,8 @@ export async function deleteTeam(s, name, password = PASSWORD) {
  * confirmation reads "Really leave?"). `name` is unused, kept for callers that pass it.
  */
 export async function leaveTeam(s, name) {
+  // A confirmed member leaves from their row in Members; one still waiting, from the notice.
+  if (await s.exec(`return !!document.querySelector(".page-tabs")`)) await s.pageTab("Members");
   await s.clickButton("Leave");
   await s.clickButton("Really leave");
   await s.waitText("Your fingerprint", ".panel", 60000);
@@ -433,9 +500,6 @@ export async function createVaultKeepingKey(s, password = PASSWORD) {
   await s.click("label.check input");
   await s.exec(`[...document.querySelectorAll("button.primary")].find((b) => !b.disabled).click(); return true`);
   await s.wait(() => s.exec(`return document.querySelector("button.brand, .m-home") ? true : null`), "the workspace", 30000);
-  await s.wait(() => s.exec(`return document.querySelector("dialog.sync-offer[open]") ? true : null`), "the offer to turn sync on");
-  await s.exec(`[...document.querySelectorAll("dialog.sync-offer button")].find((b) => b.innerText === "Not now").click(); return true`);
-  await s.wait(() => s.exec(`return document.querySelector("dialog.sync-offer") ? null : true`), "the offer to close");
   return key;
 }
 
@@ -454,20 +518,21 @@ export async function recoverOnUnlock(s, key, password) {
 
 /** In the organization's page: the vault named `vault`, its access list open. */
 async function openAccess(s, vault) {
-  await s.wait(() => s.hasText(".panel .device-list strong", vault), `the vault ${vault}`);
+  await s.pageTab("Vaults");
+  await s.wait(() => s.hasText(".panel .lname", vault), `the vault ${vault}`);
   await s.exec(
-    `const li = [...document.querySelectorAll(".panel .device-list li")].find((l) => l.querySelector("strong")?.innerText === arguments[0]);
-     [...li.querySelectorAll("button")].find((b) => b.innerText.includes("Access")).click(); return true`,
+    `const row = [...document.querySelectorAll(".panel [role=row]")].find((r) => r.querySelector(".lname")?.innerText === arguments[0]);
+     [...row.querySelectorAll("button")].find((b) => b.innerText.includes("Access")).click(); return true`,
     vault,
   );
-  await s.wait(() => s.exec(`return document.querySelector("li.nested .access-row") ? true : null`), "the access list");
+  await s.wait(() => s.exec(`return document.querySelector(".lexpand .access-row") ? true : null`), "the access list");
 }
 
 /** T4 (an owner or admin, in the organization's page): takes `email`'s access to `vault` away. */
 export async function revokeAccess(s, vault, email) {
   await openAccess(s, vault);
   await s.exec(
-    `const row = [...document.querySelectorAll("li.nested .access-row")].find((r) => r.innerText.includes(arguments[0]));
+    `const row = [...document.querySelectorAll(".lexpand .access-row")].find((r) => r.innerText.includes(arguments[0]));
      row.querySelector("button.ghost-danger").click(); return true`,
     email,
   );
@@ -479,7 +544,7 @@ export async function grantAccess(s, vault, email) {
   await openAccess(s, vault);
   await s.choose('select[aria-label="Member to give access"]', email);
   await s.exec(`const sel = document.querySelector('select[aria-label="Member to give access"]'); [...sel.closest(".row").querySelectorAll("button")].find((b) => b.innerText === "Add").click(); return true`);
-  await s.wait(() => s.exec(`return [...document.querySelectorAll("li.nested .access-row")].some((r) => r.innerText.includes(arguments[0]) && r.querySelector("button.ghost-danger")) || null`, email), `${email}'s access`, 30000);
+  await s.wait(() => s.exec(`return [...document.querySelectorAll(".lexpand .access-row")].some((r) => r.innerText.includes(arguments[0]) && r.querySelector("button.ghost-danger")) || null`, email), `${email}'s access`, 30000);
 }
 
 /** After a removal or revocation: the rotation Teams asks for, done (every vault due). */
@@ -495,25 +560,71 @@ export async function rotateDueKeys(s, org) {
   }
 }
 
+/** An owner or admin, on the team's page: turns on the setting whose name has `text`, and saves. */
+async function turnOnPolicy(s, text) {
+  await s.pageTab("Settings");
+  const find = `[...document.querySelectorAll(".setting")].find((r) => r.querySelector(".setting-name")?.innerText.includes(arguments[0]))`;
+  await s.wait(() => s.exec(`return ${find} ? true : null`, text), "the settings");
+  await s.exec(`${find}.querySelector("button[role=switch]").click(); return true`, text);
+  await s.clickButton("Save settings");
+  await s.wait(() => s.exec(`return [...document.querySelectorAll("button")].some((b) => b.innerText.includes("Save settings")) ? null : true`), "the settings to save");
+}
+
 /** J7 (an owner or admin, in the organization's page): requires approval of new devices. */
-export async function requireDeviceApproval(s) {
-  await s.wait(
-    () => s.exec(`return [...document.querySelectorAll(".page-aside label.check")].some((l) => l.innerText.includes("approve new devices")) || null`),
-    "the policies",
+export const requireDeviceApproval = (s) => turnOnPolicy(s, "Approve new devices");
+
+/** T14 (an owner or admin, in the organization's page): requires two-step verification. */
+export const requireTwoStep = (s) => turnOnPolicy(s, "Require two-step verification");
+
+/** The sidebar's "Turn on two-step verification" (a team requires it), with its tooltip, or null. */
+export const twoStepDue = (s) => s.exec(`const b = document.querySelector("button.sidebar-foot.totp"); return b ? b.title : null`);
+
+/** The current code of an authenticator app holding `secret` (RFC 6238: SHA-1, 6 digits, 30 s). */
+export function totpCode(secret, at = Date.now()) {
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+  const bits = [...secret.replace(/[\s=]/g, "").toUpperCase()].map((c) => alphabet.indexOf(c).toString(2).padStart(5, "0")).join("");
+  const key = Buffer.from(bits.match(/.{8}/g).map((b) => parseInt(b, 2)));
+  const counter = Buffer.alloc(8);
+  counter.writeBigUInt64BE(BigInt(Math.floor(at / 30000)));
+  const mac = createHmac("sha1", key).update(counter).digest();
+  const at4 = mac[mac.length - 1] & 15;
+  return String((mac.readUInt32BE(at4) & 0x7fffffff) % 1e6).padStart(6, "0");
+}
+
+/** T14: turns on two-step verification with a made-up authenticator, from the sidebar's notice
+ *  when a team asks for it, else from Sync; returns its secret. */
+export async function turnOnTwoStep(s, password = PASSWORD) {
+  const press = (text) =>
+    s.exec(`const b = [...document.querySelectorAll(".panel button")].find((b) => b.innerText === arguments[0] && !b.disabled);
+      if (!b) throw new Error("no enabled button " + arguments[0]); b.click(); return true`, text);
+  if (await twoStepDue(s)) await s.click("button.sidebar-foot.totp");
+  else {
+    await s.click("button.sidebar-foot.sync");
+    await s.wait(() => s.exec(`return [...document.querySelectorAll(".panel button")].some((b) => b.innerText === "Turn on two-step verification") || null`), "the account");
+    await press("Turn on two-step verification");
+  }
+  await s.waitText("Confirm with your master password", ".panel");
+  await s.typeLabelled("Master password", password);
+  await press("Continue");
+  const secret = await s.wait(
+    () => s.exec(`const k = [...document.querySelectorAll(".panel .hint")].find((p) => p.innerText.includes("Enter this key instead")); return k ? k.querySelector(".mono").innerText : null`),
+    "the authenticator key",
+    30000,
   );
-  await s.exec(`[...document.querySelectorAll(".page-aside label.check")].find((l) => l.innerText.includes("approve new devices")).querySelector("input").click(); return true`);
-  await s.clickButton("Save policies");
-  await s.wait(() => s.exec(`return [...document.querySelectorAll(".page-aside button")].some((b) => b.innerText.includes("Save policies")) ? null : true`), "the policies to save");
+  await s.typeLabelled("Authenticator code", totpCode(secret));
+  await press("Turn on");
+  await s.waitText("Turn off two-step verification", ".panel", 30000);
+  return secret.replace(/\s/g, "");
 }
 
 /** The device-approval state on this device's sidebar ("Waiting for approval", "Denied"), or null. */
 export const approvalState = (s) => s.exec(`const b = document.querySelector("button.sidebar-foot.approval"); return b ? b.innerText : null`);
 
-/** J7 (an owner, an admin or one of the member's approved devices, in the organization's page): approves the waiting device. */
+/** J7 (an owner, an admin or one of the member's approved devices, in the organization's page): approves the waiting device, from Needs you. */
 export async function approveDevice(s) {
-  await s.waitText("Waiting for approval", ".panel.page", 60000);
-  await s.exec(`[...document.querySelectorAll(".device-requests button")].find((b) => b.innerText === "Approve").click(); return true`);
-  await s.wait(() => s.exec(`return document.querySelector(".device-requests") ? null : true`), "the request to go", 30000);
+  await s.waitText("waits for approval", ".needs", 60000);
+  await s.exec(`[...document.querySelectorAll(".needs button")].find((b) => b.innerText === "Approve").click(); return true`);
+  await s.wait(() => s.exec(`return [...document.querySelectorAll(".needs button")].some((b) => b.innerText === "Approve") ? null : true`), "the request to go", 30000);
 }
 
 /** S9: Sync → Delete account, with the master password. */
@@ -530,6 +641,7 @@ export async function deleteAccount(s, password = PASSWORD) {
 export async function memberListed(s, org, email) {
   await openTeams(s);
   await openOrg(s, org);
+  await s.pageTab("Members");
   await s.wait(() => s.exec(`return document.querySelector(".panel").innerText.includes("Members") || null`), "the member list");
   await new Promise((r) => setTimeout(r, 1500));
   return s.exec(`return document.querySelector(".panel").innerText.includes(arguments[0])`, email);

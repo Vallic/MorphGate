@@ -312,6 +312,7 @@ pub(crate) mod testutil {
             connect_timeout: Duration::from_secs(10),
             jumps: vec![],
             via_command: None,
+            listed_keys: None,
             dialer: Some(Arc::new(Via(tunnel))),
             forward_agent: None,
         };

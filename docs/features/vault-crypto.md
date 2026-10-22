@@ -149,6 +149,7 @@ The revision memory lives in `mg-store`: `vaults.head_rev` is the highest server
 | --- | --- |
 | A pull answers with `head_rev` below the device's | `SyncError::Rollback`: "the sync server sent older data (revision R) than this device already has (L); refusing to roll back". Nothing from that answer is applied |
 | A pulled item whose `rev` is not newer than the local copy's | Skipped (`apply_remote`) |
+| A pulled item or deletion whose version (inside its signed envelope) is below the last one the server confirmed for it | `Error::OlderItem`: "the sync server sent an older copy of item … than this device already has …; refusing to roll it back". Nothing from that page is applied ([Item history](sync.md#item-history)) |
 | `410 Gone` (the history was purged) | The cursor resets to 0 and the vault is pulled in full; the `head_rev` check is off for that pass, the per-item check stays. Synced, unchanged items the server no longer lists are dropped (`drop_unseen`) |
 | Sync turned off | `head_rev` back to 0 for every vault: another server is another history |
 
@@ -172,7 +173,8 @@ How a round pages and resolves conflicts: [Sync](sync.md).
 | --- | --- |
 | `mg-vault` unit tests, one module each | Derivation determinism and domain separation, weak parameters refused (`kdf.rs`); wrap, wrong password, recovery and device domains, truncated blobs (`account.rs`); code shape, forgiving input, typos (`recovery_code.rs`); seal, other account, tampering, low-order keys (`vault.rs`); bucket sizes, trailing zeros, moved items, bit flips, wrong author, wrong key, oversize (`envelope.rs`); binding to vault and kind, SHA-256 vector, size limit (`blob.rs`); fixed vectors computed independently (`sharing.rs`) |
 | `mg-store` `vault.rs` tests | `persists_and_stores_only_ciphertext` (no hostname, password or key bytes in the file), `tampered_or_swapped_envelopes_are_rejected`, `another_accounts_keys_are_refused` |
-| `mg-store` `sync.rs` tests | `rollback_is_refused` |
+| `mg-store` `sync.rs` tests | `rollback_is_refused`, `an_older_copy_of_an_item_is_refused`, `a_deleted_item_cant_be_brought_back` |
+| `mg-store` `history.rs` tests | The plaintext with its version, deletions, items from older apps and newer kinds |
 
 `cargo test -p mg-vault -p mg-store`. Tests derive at the floor parameters (`fast_params()`, `LocalVault::with_kdf_cost(MIN_M_KIB, MIN_T, 1)`), 64 MiB each. CI runs `cargo test --workspace --all-features` on Linux and these crates on macOS and Windows.
 
