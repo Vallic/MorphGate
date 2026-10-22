@@ -27,8 +27,10 @@ Screenshots and logs go to `target/e2e/run-<time>/`.
 monkey" job runs it in an API 35 emulator on every pull request; it isn't a required check.
 
 It takes a debug build (for the emulator's processor), whose WebView answers DevTools: through it
-the vault is created (a key, groups, hosts where nothing listens, a snippet) and unlocked, and what
-the page throws is heard. Then `MONKEY_ROUNDS` (5) rounds of `MONKEY_EVENTS` (1000) touches, swipes,
+the app's first screen creates the vault (then a key, groups, hosts where nothing listens and a
+snippet go in), its unlock screen opens it, and what the page throws is heard (with when: the
+app's start, the setup or the walk). It never reloads the page, which would drop the app's calls
+still under way. Then `MONKEY_ROUNDS` (5) rounds of `MONKEY_EVENTS` (1000) touches, swipes,
 screen turns and navigation keys, each round from a fresh start with the app's task pinned (so Back
 and swipes stay in it; starts of other apps are refused). It fails on a crash or an ANR, a Rust
 panic or a Java exception in the log, an error the page throws, the process ending or the page

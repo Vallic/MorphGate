@@ -1,7 +1,8 @@
 // Android's monkey on the Android app: random touches, swipes, rotations and keys, from the
 // platform's own tool (`adb shell monkey`), on an emulator or a phone that adb reaches. The app is
-// a debug build, whose WebView answers DevTools: through it a vault is set up (a key, groups,
-// hosts where nothing listens, a snippet) and every error the page throws is heard. The walk runs
+// a debug build, whose WebView answers DevTools: through it the first screen creates a vault (then
+// a key, groups, hosts where nothing listens and a snippet go in), the unlock screen opens it, and
+// every error the page throws is heard. The walk runs
 // in rounds, each from a fresh start with the app unlocked and its task pinned (so Back and swipes
 // stay in it). A crash, a hang (ANR), a Rust panic, an uncaught error or a blank page fails it.
 //
@@ -45,7 +46,8 @@ async function until(what, fn, ms = 90000) {
 }
 
 /** The app's page over the DevTools protocol: `evaluate` runs an expression (awaiting a promise),
- * `thrown` collects what the page throws, `gone` says why the connection ended. */
+ * `thrown` collects what the page throws (during `phase`: the app's start, the setup, the walk),
+ * `gone` says why the connection ended. */
 async function devtools(pid) {
   const socket = `webview_devtools_remote_${pid}`;
   await until("the WebView's DevTools socket", () => new RegExp(`@${socket}$`, "m").test(tryAdb("shell", "cat", "/proc/net/unix")));
@@ -64,7 +66,7 @@ async function devtools(pid) {
     ws.onerror = () => fail(new Error("DevTools didn't connect"));
   });
   const waiting = new Map();
-  const d = { thrown: [], gone: null };
+  const d = { thrown: [], gone: null, phase: "start" };
   let next = 1;
   ws.onmessage = (m) => {
     const msg = JSON.parse(m.data);
@@ -75,7 +77,7 @@ async function devtools(pid) {
       else w.ok(msg.result);
     } else if (msg.method === "Runtime.exceptionThrown") {
       const e = msg.params.exceptionDetails;
-      d.thrown.push((e.exception?.description ?? e.text).split("\n")[0]);
+      d.thrown.push(`${d.phase}: ${(e.exception?.description ?? e.text).split("\n")[0]}`);
     } else if (msg.method === "Inspector.targetCrashed") {
       d.gone = "the page crashed";
     } else if (msg.method === "Inspector.detached") {
@@ -108,21 +110,37 @@ async function devtools(pid) {
   return d;
 }
 
-/** The page loaded afresh, with the workspace showing. */
-async function reload(d) {
-  await d.evaluate(`window.__before = true; setTimeout(() => location.reload(), 0); true`);
-  await until("the workspace", () => d.evaluate(`!window.__before && !!document.querySelector(".m-home, button.brand")`).catch(() => false));
-}
+// In the page: typing into the field a label names, clicking a button by its text (as a person
+// would, through the app's own screens: the page is never reloaded, which would drop the app's
+// calls still under way).
+const PAGE = `
+  const type = (label, value) => {
+    const e = [...document.querySelectorAll("label")].find((l) => l.innerText.includes(label))?.querySelector("input");
+    if (!e) return false;
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(e, value);
+    e.dispatchEvent(new Event("input", { bubbles: true }));
+    return true;
+  };
+  const click = (text, css = "button") => {
+    const b = [...document.querySelectorAll(css)].find((b) => b.innerText.trim() === text && !b.disabled);
+    b?.click();
+    return !!b;
+  };`;
+const inPage = (d, body) => d.evaluate(`(() => { ${PAGE}\n${body} })()`).catch(() => null);
+const WORKSPACE = `return document.querySelector(".m-home, button.brand") ? true : null`;
 
-/** The vault unlocked (created, with something on every page, the first time), the workspace
- * showing. */
+/** The vault unlocked (created, with something on every page, the first time) through the app's
+ * first screen or its unlock screen, the workspace showing. */
 async function unlock(d) {
-  const invoke = (cmd, args = {}) => `window.__TAURI_INTERNALS__.invoke(${JSON.stringify(cmd)}, ${JSON.stringify(args)})`;
   const status = await until("the app's script", () =>
-    d.evaluate(`window.__TAURI_INTERNALS__ ? ${invoke("vault_status")} : null`).catch(() => null),
+    d.evaluate(`window.__TAURI_INTERNALS__ ? window.__TAURI_INTERNALS__.invoke("vault_status") : null`).catch(() => null),
   );
   if (status === "uninitialized") {
-    await d.evaluate(invoke("vault_create", { password: PASSWORD }));
+    await until("the first screen", () => inPage(d, `return type("Master password", ${JSON.stringify(PASSWORD)}) && type("Repeat password", ${JSON.stringify(PASSWORD)})`));
+    await until("Create vault", () => inPage(d, `return click("Create vault")`));
+    await until("the recovery key", () => inPage(d, `const c = document.querySelector("label.check input"); if (!c) return null; if (!c.checked) c.click(); return true`));
+    await until("Open my vault", () => inPage(d, `return click("Open my vault")`));
+    await until("the workspace", () => inPage(d, WORKSPACE));
     await d.evaluate(`(async () => {
       const invoke = window.__TAURI_INTERNALS__.invoke;
       const key = await invoke("key_generate", { label: "monkey", vaultId: null });
@@ -133,12 +151,14 @@ async function unlock(d) {
         await invoke("host_save", { input: { label, hostname, port: 1, user: "deploy", auth, groupId, tags: ["monkey"] } });
       }
       await invoke("snippet_save", { input: { name: "Disk", body: "df -h", tags: ["ops"] } });
+      await invoke("plugin:event|emit", { event: "vault-changed", payload: null });
       return true;
     })()`);
   } else if (status === "locked") {
-    await d.evaluate(invoke("vault_unlock", { password: PASSWORD }));
+    await until("the unlock screen", () => inPage(d, `click("Use master password"); return type("Master password", ${JSON.stringify(PASSWORD)})`));
+    await until("Unlock", () => inPage(d, `return click("Unlock", "button[type=submit]")`));
   }
-  await reload(d);
+  await until("the workspace", () => inPage(d, WORKSPACE));
 }
 
 /** The app's task, pinned: the monkey's Back and swipes can't take it out of the app. */
@@ -188,9 +208,11 @@ for (let round = 1; round <= ROUNDS; round++) {
     adb("shell", "monkey", "-p", PKG, "-c", "android.intent.category.LAUNCHER", "1");
     const pid = await until("the app's process", () => tryAdb("shell", "pidof", PKG));
     d = await devtools(pid);
+    d.phase = "setup";
     await unlock(d);
     if (pin()) totals.pins++;
     await sleep(1000);
+    d.phase = "walk";
 
     // The walk: mostly touches and swipes, some turns of the screen. No system keys or app
     // switches (they'd only leave the app), no random key codes (some sleep the device); typing
