@@ -225,9 +225,13 @@ mod tests {
         let newer = i64::try_from(MIGRATIONS.len() + 1).unwrap();
         conn.pragma_update(None, "user_version", newer).unwrap();
         let e = migrate(&mut conn).unwrap_err();
-        assert!(matches!(e, crate::Error::NewerVault { found, known } if found == MIGRATIONS.len() + 1 && known == MIGRATIONS.len()));
+        assert!(
+            matches!(e, crate::Error::NewerVault { found, known } if found == MIGRATIONS.len() + 1 && known == MIGRATIONS.len())
+        );
         assert!(e.to_string().contains("newer version of MorphGate"));
-        let after: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0)).unwrap();
+        let after: i64 = conn
+            .pragma_query_value(None, "user_version", |r| r.get(0))
+            .unwrap();
         assert_eq!(after, newer);
     }
 }

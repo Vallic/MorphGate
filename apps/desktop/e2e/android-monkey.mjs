@@ -49,6 +49,8 @@ async function until(what, fn, ms = 90000) {
   throw new Error(`timed out waiting for ${what}`);
 }
 
+const CRASHED = "the page crashed";
+
 /** The app's page over the DevTools protocol: `evaluate` runs an expression (awaiting a promise),
  * `thrown` collects what the page throws (during `phase`: the app's start, the setup, the walk),
  * `gone` says why the connection ended. */
@@ -83,7 +85,7 @@ async function devtools(pid) {
       const e = msg.params.exceptionDetails;
       d.thrown.push(`${d.phase}: ${(e.exception?.description ?? e.text).split("\n")[0]}`);
     } else if (msg.method === "Inspector.targetCrashed") {
-      d.gone = "the page crashed";
+      d.gone = CRASHED;
     } else if (msg.method === "Inspector.detached") {
       d.gone = `the page went away (${msg.params.reason})`;
     }
@@ -109,7 +111,14 @@ async function devtools(pid) {
     ws.close();
     tryAdb("forward", "--remove", `tcp:${port}`);
   };
-  await send("Inspector.enable");
+  // Chromium answers Inspector.enable with targetCrashed while the page's renderer hasn't started
+  // yet (a WebView just made, before its page loads): ask again until it has, for up to 30 s.
+  for (let tries = 60; ; tries--) {
+    await send("Inspector.enable");
+    if (d.gone !== CRASHED || !tries) break;
+    d.gone = null;
+    await sleep(500);
+  }
   await send("Runtime.enable");
   return d;
 }
@@ -213,7 +222,7 @@ async function fail(dir, round, why, extra = []) {
   const report = [`Android monkey: ${why}`, `seed ${SEED}, round ${round} of ${ROUNDS} (MONKEY_SEED=${SEED} repeats it)`, ...extra].join("\n");
   writeFileSync(`${out}/failure.txt`, `${report}\n`);
   writeFileSync(`${dir}/end.png`, execFileSync(ADB, ["exec-out", "screencap", "-p"], { maxBuffer: 64 << 20 }));
-  throw new Error(report);
+  throw Object.assign(new Error(report), { reported: true });
 }
 
 // From no data: round 1 creates the vault (so not a phone whose MorphGate you use).
@@ -232,9 +241,10 @@ for (let round = 1; round <= ROUNDS; round++) {
   const logcat = spawn(ADB, ["logcat", "-v", "threadtime"], { stdio: ["ignore", "pipe", "ignore"] });
   logcat.stdout.pipe(createWriteStream(`${dir}/logcat.txt`));
   let d = null;
+  let pid = "";
   try {
     adb("shell", "monkey", "-p", PKG, "-c", "android.intent.category.LAUNCHER", "1");
-    const pid = await until("the app's process", () => tryAdb("shell", "pidof", PKG));
+    pid = await until("the app's process", () => tryAdb("shell", "pidof", PKG));
     d = await devtools(pid);
     d.phase = "setup";
     await unlock(d);
@@ -299,6 +309,15 @@ for (let round = 1; round <= ROUNDS; round++) {
     writeFileSync(`${dir}/end.png`, execFileSync(ADB, ["exec-out", "screencap", "-p"], { maxBuffer: 64 << 20 }));
     const slow = anrs ? `; ${anrs} ANR${anrs > 1 ? "s" : ""} noted${stuck.length ? " (anr.txt)" : ""}, then it drew again` : "";
     console.log(`  round ${round}: ${injected} events, nothing crashed or threw${slow}; in front: ${focus}`);
+  } catch (e) {
+    // Anything else that ended the round (the page never came, a screen never showed): a failure
+    // too, with the round's log once it has caught up.
+    if (e.reported) throw e;
+    await sleep(2000);
+    logcat.kill();
+    await sleep(500);
+    const problems = pid ? logProblems(readFileSync(`${dir}/logcat.txt`, "utf8"), pid) : [];
+    await fail(dir, round, `${e.message} (during the ${d?.phase ?? "launch"})`, problems);
   } finally {
     logcat.kill();
     d?.close();
