@@ -12,7 +12,7 @@ The vault is one SQLite file on the device that holds every item as a signed, en
 | macOS | `~/Library/Application Support/com.morphgate.desktop/` |
 | Windows | `%APPDATA%\com.morphgate.desktop\` |
 
-`LocalVault::open` creates the file with mode 0600 on Unix, turns on `foreign_keys` and `secure_delete` (deleted rows are overwritten, not only unlinked), and migrates by `PRAGMA user_version` (7 migrations in `schema.rs`). A file from a newer app is refused: "vault data is corrupt: vault was written by a newer MorphGate (schema N); please update the app". On desktops a second launch hands over to the running app (single instance per data folder), so only one process opens the file. The tables are listed in [App architecture](../architecture.md#the-sqlite-schema).
+`LocalVault::open` creates the file with mode 0600 on Unix, turns on `foreign_keys` and `secure_delete` (deleted rows are overwritten, not only unlinked), and migrates by `PRAGMA user_version` (8 migrations in `schema.rs`). A file from a newer app is refused, and left as it is (`Error::NewerVault`): the app still starts, without the vault, and its window says "this vault was saved by a newer version of MorphGate (vault format N; this version reads up to M). Install the latest version from morphgate.com/download to open it; the vault is unchanged." (`vault_status` returns it; nothing else runs). On desktops a second launch hands over to the running app (single instance per data folder), so only one process opens the file. The tables are listed in [App architecture](../architecture.md#the-sqlite-schema).
 
 ### What is in the clear
 

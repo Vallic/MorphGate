@@ -39,6 +39,8 @@ prompt. Write them for users.
 - Two devices refreshing the same cloud source at once no longer make duplicate hosts or
   "(conflict)" copies.
 - About links to the documentation (morphgate.com/docs) and the source code on GitHub.
+- A vault saved by a newer MorphGate (after going back to an older version) no longer stops the app
+  from opening: its window says to install the latest version, and the vault is left as it is.
 - Copy buttons (a public key, the recovery key, an invite code, host key details) fall back to
   another way of copying when the system refuses the first, and say "Couldn't copy" instead of
   doing nothing when neither works.

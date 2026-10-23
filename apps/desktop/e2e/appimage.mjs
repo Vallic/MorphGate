@@ -1088,3 +1088,35 @@ try {
 } finally {
   await s.close();
 }
+
+// A vault a newer MorphGate wrote (a schema this version doesn't know): the window says to
+// install the latest version instead of the app quitting, and the vault stays as it was. The
+// last session's app outlives it: stop it, or the launch hands over to it.
+for (const pid of appImagePids()) process.kill(pid, "SIGTERM");
+for (let i = 0; i < 50 && appImagePids().length > 0; i++) await new Promise((r) => setTimeout(r, 200));
+{
+  const file = `${process.env.XDG_DATA_HOME}/com.morphgate.desktop/vault.sqlite3`;
+  const { DatabaseSync } = await import("node:sqlite");
+  const schema = () => {
+    const db = new DatabaseSync(file);
+    try {
+      return db.prepare("PRAGMA user_version").get().user_version;
+    } finally {
+      db.close();
+    }
+  };
+  const newer = schema() + 1;
+  const db = new DatabaseSync(file);
+  db.exec(`PRAGMA user_version = ${newer}`);
+  db.close();
+  s = await session(app);
+  try {
+    const text = await s.waitText("newer version of MorphGate", "body", 60000);
+    assert.match(text, /morphgate\.com\/download/);
+    await s.screenshot(`${shots}/newer-vault.png`);
+  } finally {
+    await s.close();
+  }
+  assert.equal(schema(), newer);
+  ok("a vault a newer MorphGate wrote: the window says to install the latest version, and the vault is left as it was");
+}

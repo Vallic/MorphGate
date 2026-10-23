@@ -107,7 +107,7 @@ export function App() {
     return () => void off.then((f) => f());
   }, [loadTermSettings]);
 
-  if (fatal) return <div className="gate"><p className="error">{fatal}</p></div>;
+  if (fatal) return <div className="gate"><p className="error gate-error">{fatal}</p></div>;
   if (status === null) return <div className="gate" />;
   if (status === "uninitialized") return <SetupScreen erased={erased} onDone={(fresh) => (setErased(null), fresh ? syncOfferTime.schedule() : syncOfferTime.forget(), setStatus("unlocked"))} />;
   if (status === "locked") return <UnlockScreen onUnlocked={() => setStatus("unlocked")} />;

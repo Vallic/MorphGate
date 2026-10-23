@@ -159,9 +159,10 @@ pub(crate) fn migrate(conn: &mut Connection) -> Result<()> {
     let current: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
     let current = usize::try_from(current).unwrap_or(0);
     if current > MIGRATIONS.len() {
-        return Err(crate::Error::Corrupt(format!(
-            "vault was written by a newer MorphGate (schema {current}); please update the app"
-        )));
+        return Err(crate::Error::NewerVault {
+            found: current,
+            known: MIGRATIONS.len(),
+        });
     }
     for (i, sql) in MIGRATIONS.iter().enumerate().skip(current) {
         let tx = conn.transaction()?;
@@ -215,5 +216,22 @@ mod tests {
              INSERT INTO items (id, vault_id, envelope, updated_at) VALUES ('I', 'W', x'04', 8);",
         )
         .unwrap();
+    }
+
+    /// A vault from a newer MorphGate is refused as such (not as corrupt), and left as it was.
+    #[test]
+    fn newer_schema_is_refused() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        let newer = i64::try_from(MIGRATIONS.len() + 1).unwrap();
+        conn.pragma_update(None, "user_version", newer).unwrap();
+        let e = migrate(&mut conn).unwrap_err();
+        assert!(
+            matches!(e, crate::Error::NewerVault { found, known } if found == MIGRATIONS.len() + 1 && known == MIGRATIONS.len())
+        );
+        assert!(e.to_string().contains("newer version of MorphGate"));
+        let after: i64 = conn
+            .pragma_query_value(None, "user_version", |r| r.get(0))
+            .unwrap();
+        assert_eq!(after, newer);
     }
 }
