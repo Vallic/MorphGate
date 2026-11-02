@@ -15,7 +15,7 @@ http = ["dep:mg-sync", "dep:tokio"]
 mg-sync = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true }
 mg-vault.workspace = true
-rusqlite = { version = "0.40.2", features = ["bundled"] }
+rusqlite = { version = "0.41.1", features = ["bundled"] }
 serde.workspace = true
 serde_json.workspace = true
 sha2 = "0.11.0"
