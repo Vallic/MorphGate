@@ -13,7 +13,7 @@ base64 = "0.23.1"
 getrandom = "0.4.3"
 hmac = "0.13.0"
 mg-sync = { workspace = true, default-features = false }
-rusqlite = { version = "0.40.2", features = ["bundled"] }
+rusqlite = { version = "0.41.1", features = ["bundled"] }
 serde.workspace = true
 serde_json.workspace = true
 sha2 = "0.11.1"
