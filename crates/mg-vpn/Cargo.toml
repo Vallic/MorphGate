@@ -41,5 +41,5 @@ tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 rcgen = "0.14.10"
 tokio-rustls = { version = "0.26.6", default-features = false, features = ["aws_lc_rs"] }
-lzokay-native = "0.1.0"
+lzokay-native = "0.2.1"
 sha2 = "0.11.1"
